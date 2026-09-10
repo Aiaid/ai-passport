@@ -16,7 +16,7 @@
 #include "demo_discovery.h"
 #include "demo_radio.h"
 #include "disco_class.h"
-#include "ui_pixel.h"
+#include "ui_echo.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -31,21 +31,33 @@
 static const char *TAG = "demo_disco";
 
 #define DEV_MAX         32      // 设备表上限
-#define ROW_MAX         6       // 列表显示行数
+#define ROW_MAX         5       // 列表显示行数
 #define CHAN_HOP_MS     250     // 信道轮询间隔
 #define CHAN_MAX        13      // 2.4GHz 信道 1..13
 #define DEV_STALE_MS    30000   // 超过此时长未见视为过期,不显示/可被 LRU 顶替
 #define UI_REFRESH_MS   400
 
-// 类型配色(与 ECHO 设计稿一致):PHONE 绿 / PC 蓝 / IOT 琥珀 / AP 紫 / ? 灰。
+// 类型配色(对齐 ECHO 设计稿):PHONE 绿 / PC 蓝 / IOT 琥珀 / AP 紫 / ? 灰。
 static uint32_t type_color(disco_type_t t)
 {
     switch (t) {
-    case DISCO_PHONE: return 0x4CAF50;
-    case DISCO_PC:    return 0x2196F3;
-    case DISCO_IOT:   return 0xFFB300;
-    case DISCO_AP:    return 0x9C27B0;
+    case DISCO_PHONE: return ECHO_T_PHONE;
+    case DISCO_PC:    return ECHO_T_PC;
+    case DISCO_IOT:   return ECHO_T_IOT;
+    case DISCO_AP:    return ECHO_T_AP;
     default:          return 0x9E9E9E;
+    }
+}
+
+// 类型的 2 字母徽标码。
+static const char *type_code(disco_type_t t)
+{
+    switch (t) {
+    case DISCO_PHONE: return "PH";
+    case DISCO_PC:    return "PC";
+    case DISCO_IOT:   return "IO";
+    case DISCO_AP:    return "AP";
+    default:          return "??";
     }
 }
 
@@ -69,10 +81,12 @@ static dev_entry_t  s_table[DEV_MAX];
 
 // --- LVGL 对象(仅 LVGL task)---
 static lv_obj_t   *s_scr;
-static lv_obj_t   *s_counts;
+static lv_obj_t   *s_total;              // header 右侧设备总数
+static lv_obj_t   *s_cnt[5];             // PHONE/PC/IOT/AP/? 计数标签
 static lv_obj_t   *s_rows[ROW_MAX];
-static lv_obj_t   *s_badges[ROW_MAX];
-static lv_obj_t   *s_labels[ROW_MAX];
+static lv_obj_t   *s_badges[ROW_MAX];    // 类型色块徽标
+static lv_obj_t   *s_labels[ROW_MAX];    // 厂商/MAC + ~rnd
+static lv_obj_t   *s_rbar[ROW_MAX][3];   // 每行 RSSI 迷你条
 static lv_timer_t *s_ui_timer;
 
 // --- 后台 / 资源 ---
@@ -258,27 +272,40 @@ static void ui_tick(lv_timer_t *t)
     }
 
     if (s_failed) {
-        lv_label_set_text(s_counts, "Sniffer unavailable");
+        lv_label_set_text(s_total, "ERR");
     } else {
-        lv_label_set_text_fmt(s_counts, "P:%d C:%d I:%d A:%d  ch%d",
-                              cnt[DISCO_PHONE], cnt[DISCO_PC],
-                              cnt[DISCO_IOT], cnt[DISCO_AP], s_channel);
+        lv_label_set_text_fmt(s_total, "x%d ch%d", n, s_channel);
     }
+    lv_label_set_text_fmt(s_cnt[0], "PHONE  %d", cnt[DISCO_PHONE]);
+    lv_label_set_text_fmt(s_cnt[1], "PC  %d", cnt[DISCO_PC]);
+    lv_label_set_text_fmt(s_cnt[2], "IOT  %d", cnt[DISCO_IOT]);
+    lv_label_set_text_fmt(s_cnt[3], "AP  %d", cnt[DISCO_AP]);
+    // 随机 MAC 的 STA 多被归为 UNKNOWN,单列一项以免"消失"。
+    lv_label_set_text_fmt(s_cnt[4], "?  %d", cnt[DISCO_UNKNOWN]);
 
     for (int r = 0; r < ROW_MAX; r++) {
         if (r < n) {
+            uint32_t col = type_color(snap[r].type);
             lv_obj_remove_flag(s_rows[r], LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_bg_color(s_badges[r],
-                lv_color_hex(type_color(snap[r].type)), 0);
+            // 徽标:类型色块 + 2 字母码。
+            lv_obj_set_style_bg_color(s_badges[r], lv_color_hex(col), 0);
+            lv_label_set_text(s_badges[r], type_code(snap[r].type));
+            // 名称:厂商或短 MAC + 随机标记。
             const uint8_t *m = snap[r].mac;
-            char name[20];
+            char name[24];
             if (snap[r].vendor[0]) {
                 snprintf(name, sizeof(name), "%s", snap[r].vendor);
             } else {
                 snprintf(name, sizeof(name), "%02X:%02X:%02X", m[3], m[4], m[5]);
             }
-            lv_label_set_text_fmt(s_labels[r], "%-12s %ddBm%s",
-                                  name, snap[r].best, snap[r].rnd ? " ~rnd" : "");
+            lv_label_set_text_fmt(s_labels[r], "%s%s",
+                                  name, snap[r].rnd ? " ~rnd" : "");
+            // RSSI 迷你条:按强度填充 1..3 段。
+            int filled = (snap[r].best > -55) ? 3 : (snap[r].best > -70) ? 2 : 1;
+            for (int k = 0; k < 3; k++) {
+                lv_obj_set_style_bg_color(s_rbar[r][k],
+                    lv_color_hex(k < filled ? col : ECHO_ARCTRK), 0);
+            }
         } else {
             lv_obj_add_flag(s_rows[r], LV_OBJ_FLAG_HIDDEN);
         }
@@ -304,40 +331,83 @@ void demo_discovery_enter(void)
     memset(s_table, 0, sizeof(s_table));
     portEXIT_CRITICAL(&s_mux);
 
-    // enter 已在 LVGL task 上下文且已持锁,直接建屏。
-    s_scr = ui_pixel_screen_create("RADAR");
+    // enter 已在 LVGL task 上下文且已持锁,直接建屏。ECHO HUD 风格。
+    s_scr = ui_echo_screen("RADAR");
+    s_total = ui_echo_header_right(s_scr, "x0");
 
-    lv_obj_t *count_panel = ui_pixel_panel_create(s_scr, 16, 50, 208, 26, UI_YELLOW);
-    s_counts = lv_label_create(count_panel);
-    lv_obj_set_style_text_font(s_counts, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_counts, lv_color_hex(UI_INK), 0);
-    lv_obj_center(s_counts);
-    lv_label_set_text(s_counts, "scanning...");
+    // 左上角装饰小雷达(同心圈 + blip;扫描线 LVGL 做不动,省略)。
+    lv_obj_t *radar = ui_echo_panel(s_scr, 8, 36, 86, 86);
+    lv_obj_set_style_pad_all(radar, 0, 0);
+    const int rings[3] = { 78, 50, 24 };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *ring = lv_obj_create(radar);
+        lv_obj_remove_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(ring, rings[i], rings[i]);
+        lv_obj_center(ring);
+        lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_color(ring, lv_color_hex(ECHO_STROKE), 0);
+        lv_obj_set_style_border_width(ring, 1, 0);
+    }
+    // 几个静态 blip(装饰,非实时数据)。
+    const int blip[4][3] = {  // x, y 偏移, 颜色下标
+        { 16, -20 }, { -18, 12 }, { 8, 22 }, { -24, -10 } };
+    const uint32_t blipc[4] = { ECHO_T_PHONE, ECHO_T_PC, ECHO_T_IOT, ECHO_T_AP };
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *b = lv_obj_create(radar);
+        lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(b, 6, 6);
+        lv_obj_align(b, LV_ALIGN_CENTER, blip[i][0], blip[i][1]);
+        lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(b, 0, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(blipc[i]), 0);
+    }
 
-    lv_obj_t *list = ui_pixel_panel_create(s_scr, 16, 84, 208, 192, UI_PAPER);
+    // 右侧类型计数(颜色即类型)+ UNKNOWN。
+    lv_obj_t *cp = ui_echo_panel(s_scr, 100, 36, 132, 86);
+    const uint32_t cc[5] = { ECHO_T_PHONE, ECHO_T_PC, ECHO_T_IOT, ECHO_T_AP, 0x9E9E9E };
+    const char *cinit[5] = { "PHONE  0", "PC  0", "IOT  0", "AP  0", "?  0" };
+    for (int i = 0; i < 5; i++) {
+        s_cnt[i] = ui_echo_label(cp, cinit[i], &lv_font_montserrat_14, cc[i]);
+        lv_obj_align(s_cnt[i], LV_ALIGN_TOP_LEFT, 0, i * 15);
+    }
+
+    // 设备列表行(各自为 HUD 面板)。
     for (int r = 0; r < ROW_MAX; r++) {
-        lv_obj_t *row = lv_obj_create(list);
-        lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_size(row, 192, 28);
-        lv_obj_set_pos(row, 0, r * 30);
-        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_t *row = ui_echo_panel(s_scr, 8, 128 + r * 34, 224, 30);
+        lv_obj_set_style_pad_all(row, 3, 0);
 
-        lv_obj_t *badge = lv_obj_create(row);
-        lv_obj_remove_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_size(badge, 14, 14);
-        lv_obj_align(badge, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_radius(badge, 3, 0);
-        lv_obj_set_style_border_width(badge, 2, 0);
-        lv_obj_set_style_border_color(badge, lv_color_hex(UI_INK), 0);
+        // 徽标 = 带底色的 label(2 字母)。
+        lv_obj_t *badge = lv_label_create(row);
+        lv_obj_set_style_text_font(badge, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(badge, lv_color_hex(ECHO_HDRTEXT), 0);
+        lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(badge, lv_color_hex(0x9E9E9E), 0);
+        lv_obj_set_style_radius(badge, 2, 0);
+        lv_obj_set_style_pad_left(badge, 3, 0);
+        lv_obj_set_style_pad_right(badge, 3, 0);
+        lv_obj_set_style_pad_top(badge, 1, 0);
+        lv_obj_set_style_pad_bottom(badge, 1, 0);
+        lv_obj_align(badge, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_label_set_text(badge, "??");
 
-        lv_obj_t *label = lv_label_create(row);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(label, lv_color_hex(UI_INK), 0);
-        lv_obj_align(label, LV_ALIGN_LEFT_MID, 22, 0);
-        lv_label_set_text(label, "");
+        lv_obj_t *label = ui_echo_label(row, "", &lv_font_montserrat_14, ECHO_TEXT);
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, 34, 0);
+
+        // RSSI 三段迷你条(高度 4/7/10,共底对齐)。
+        const int bh[3] = { 4, 7, 10 };
+        const int bx[3] = { -14, -9, -4 };
+        for (int k = 0; k < 3; k++) {
+            lv_obj_t *b = lv_obj_create(row);
+            lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_size(b, 3, bh[k]);
+            lv_obj_align(b, LV_ALIGN_BOTTOM_RIGHT, bx[k], -2);
+            lv_obj_set_style_radius(b, 0, 0);
+            lv_obj_set_style_border_width(b, 0, 0);
+            lv_obj_set_style_pad_all(b, 0, 0);
+            lv_obj_set_style_bg_color(b, lv_color_hex(ECHO_ARCTRK), 0);
+            s_rbar[r][k] = b;
+        }
 
         lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
         s_rows[r] = row;
@@ -395,9 +465,11 @@ void demo_discovery_exit(void)
     if (s_scr) {
         lv_obj_delete(s_scr);
         s_scr = NULL;
-        s_counts = NULL;
+        s_total = NULL;
+        for (int i = 0; i < 5; i++) s_cnt[i] = NULL;
         for (int r = 0; r < ROW_MAX; r++) {
             s_rows[r] = s_badges[r] = s_labels[r] = NULL;
+            for (int k = 0; k < 3; k++) s_rbar[r][k] = NULL;
         }
     }
 }

@@ -25,21 +25,6 @@ run_static_checks() {
 
     test_dir="$(mktemp -d /tmp/ai-passport-host-tests.XXXXXX)"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
-        tests/test_ui_pixel_math.c main/ui_pixel_math.c \
-        -o "${test_dir}/test_ui_pixel_math"
-    "${test_dir}/test_ui_pixel_math"
-
-    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
-        tests/test_sudoku_model.c main/sudoku_model.c \
-        -o "${test_dir}/test_sudoku_model"
-    "${test_dir}/test_sudoku_model"
-
-    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
-        tests/test_mines_model.c main/mines_model.c \
-        -o "${test_dir}/test_mines_model"
-    "${test_dir}/test_mines_model"
-
-    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_csi_metric.c main/csi_metric.c -lm \
         -o "${test_dir}/test_csi_metric"
     "${test_dir}/test_csi_metric"

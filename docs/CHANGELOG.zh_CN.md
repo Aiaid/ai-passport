@@ -6,6 +6,7 @@
 
 ## Unreleased
 
+- 将全彩 ECHO HUD 设计实装到设备 UI,并把菜单精简为两种被动感知设备:ECHO(Wi-Fi CSI 在场/运动)与 RADAR(设备发现)。移除数独、扫雷两个游戏以及 Display/Button/Audio/Battery 硬件自检页,连同其源文件、模型、`puzzle_ui`/`ui_pixel`/`ui_pixel_math` 辅助与对应主机测试(`tools/validate.sh --static` 同步更新);新增共享的 `main/ui_echo.c` 为菜单、ECHO、RADAR 三屏提供 HUD 配色与控件。RADAR 计数新增 UNKNOWN(`?`)项与设备总数,使随机 MAC 的 STA 被体现而非「消失」。BSP(`components/bsp`)保持不变。
 - 新增 `feature/wifi-csi-sensing` 分支:ECHO,被动 Wi-Fi CSI 感知菜单模式(`main/demo_csi.c`)。ESP32-C3 作为 STA 连接用户自己的路由器,ping 网关以产生稳定 CSI 流,在设备上计算 EWMA 运动分数,并把每条记录以 CSV 行从 USB-Serial-JTAG 串流出来。NimBLE GATT 外设(`main/csi_ble.c`,广播名 `AIPassport-CSI`)提供 STATUS 通知特征与 CONTROL 写特征(`start`/`stop`/`ftm`/`ping_ms`),并启用 Wi-Fi/BLE 软件共存;可选 FTM 测距在 AP 非 responder 时优雅降级。纯逻辑(`main/csi_metric.c`、`main/csi_proto.c`)由 host 测试 `tests/test_csi_metric.c`、`tests/test_csi_proto.c` 覆盖,已接入 `tools/validate.sh --static`。Wi-Fi 凭证经 menuconfig 设置、绝不入库。可在 ESP-IDF 5.5.3 上编译通过(app 约占 3 MB 分区的 1.19 MB);尚未真机验证。见 [`docs/development/wifi-csi-sensing.zh_CN.md`](development/wifi-csi-sensing.zh_CN.md)。
 - 新增「纯游戏卡带」玩法分支 `feature/puzzle-games`：加入三键数独（`main/demo_sudoku.c` + `sudoku_model.c`，设备端迭代回溯出题并保证唯一解，三档难度）与三键扫雷（`main/demo_mines.c` + `mines_model.c`，9×9 十雷、首点安全、连锁展开、和弦翻开）；两者共用一块 216×216 I4 画布与内嵌像素字体（`main/puzzle_ui.c`）以适应 24 KB LVGL 池。菜单精简为 Sudoku / Mines / Display / Button / Audio / Battery 六项，移除 Wi-Fi、BLE、低功耗演示页。新增主机测试 `tests/test_sudoku_model.c`、`tests/test_mines_model.c` 并纳入 `tools/validate.sh --static`。
 

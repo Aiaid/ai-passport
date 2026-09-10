@@ -1,21 +1,17 @@
-// main/main.c —— FoloToy AI Passport 纯游戏卡带:初始化 + 菜单 + 按键分发。
+// main/main.c —— FoloToy AI Passport · ECHO:初始化 + 菜单 + 按键分发。
 //
-// 菜单六项:两个游戏(数独、扫雷)+ 四个硬件自检页。
+// 菜单两项感知设备:ECHO(被动 WiFi CSI 在场/运动)+ RADAR(被动设备发现)。
 //
 // 按键语义(全局统一):
 //   上/下 短按   菜单中=移动选中项;演示页中=该页自定义
-//   上/下 长按   演示页中=该页自定义(游戏页用来跳一整行;数独 EDIT 下先放弃候选值再跳行)
 //   确定  短按   菜单中=进入选中项;演示页中=该页自定义
-//   确定  双击   演示页中=该页自定义(游戏页用来清空/插旗)
 //   确定  长按   演示页中=返回菜单(由本文件统一拦截)
 #include "bsp_i2c.h"
 #include "bsp_display.h"
 #include "bsp_button.h"
-#include "bsp_audio.h"
-#include "bsp_battery.h"
 #include "bsp_pins.h"      // 错误日志里要打印 BSP_LCD_* 引脚号
 #include "demo.h"
-#include "ui_pixel.h"
+#include "ui_echo.h"
 #include "lvgl.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
@@ -25,24 +21,24 @@
 static const char *TAG = "main";
 
 static const demo_entry_t DEMOS[] = {
-    { "Sudoku",  demo_sudoku_enter,  demo_sudoku_exit,  demo_sudoku_key  },
-    { "Mines",   demo_mines_enter,   demo_mines_exit,   demo_mines_key   },
-    { "Display", demo_display_enter, demo_display_exit, demo_display_key },
-    { "Button",  demo_button_enter,  demo_button_exit,  demo_button_key  },
-    { "Audio",   demo_audio_enter,   demo_audio_exit,   demo_audio_key   },
-    { "Battery", demo_battery_enter, demo_battery_exit, demo_battery_key },
-    { "ECHO",    demo_csi_enter,     demo_csi_exit,     demo_csi_key     },
-    { "RADAR",   demo_discovery_enter, demo_discovery_exit, demo_discovery_key },
+    { "ECHO",  demo_csi_enter,       demo_csi_exit,       demo_csi_key       },
+    { "RADAR", demo_discovery_enter, demo_discovery_exit, demo_discovery_key },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
-// 各外设初始化结果:失败的项在菜单里标 [FAIL] 且不允许进入。
+// 每项的副标题(菜单卡片上的一行说明)。
+static const char *DEMO_DESC[DEMO_COUNT] = {
+    "WiFi CSI motion sense",
+    "Passive device scan",
+};
+
+// 各项是否可进入(依赖按键初始化)。
 static bool s_ok[DEMO_COUNT];
 
 static lv_obj_t *s_menu_scr;
 static lv_obj_t *s_cards[DEMO_COUNT];
-static lv_obj_t *s_rows[DEMO_COUNT];
-static lv_obj_t *s_mascot;
+static lv_obj_t *s_rows[DEMO_COUNT];   // 标题
+static lv_obj_t *s_desc[DEMO_COUNT];   // 副标题
 static int  s_sel;                 // 当前选中项
 static int  s_active = -1;         // 当前所在演示页;-1 = 在菜单
 
@@ -60,31 +56,40 @@ static lv_timer_t   *s_key_timer;
 
 static void menu_refresh(void) {
     for (size_t i = 0; i < DEMO_COUNT; i++) {
+        bool sel = ((int)i == s_sel);
         lv_label_set_text_fmt(s_rows[i], "%s%s",
-                              DEMOS[i].name,
-                              s_ok[i] ? "" : "  [FAIL]");
-        ui_pixel_set_selected(s_cards[i], (int)i == s_sel, s_ok[i]);
-        lv_obj_set_style_text_color(s_rows[i],
-            s_ok[i] ? lv_color_hex(UI_INK) : lv_color_hex(0x7A2020), 0);
+                              DEMOS[i].name, s_ok[i] ? "" : " [X]");
+        // 选中:琥珀底 + 深色字;失败:红字;常规:面板底 + 亮字。
+        uint32_t bg = sel ? ECHO_AMBER : ECHO_PANEL;
+        uint32_t bd = sel ? ECHO_AMBER : ECHO_STROKE;
+        uint32_t tx = !s_ok[i] ? ECHO_RED : (sel ? ECHO_HDRTEXT : ECHO_TEXT);
+        uint32_t dx = sel ? ECHO_HDRTEXT : ECHO_MUTED;
+        lv_obj_set_style_bg_color(s_cards[i], lv_color_hex(bg), 0);
+        lv_obj_set_style_border_color(s_cards[i], lv_color_hex(bd), 0);
+        lv_obj_set_style_border_width(s_cards[i], sel ? 2 : 1, 0);
+        lv_obj_set_style_text_color(s_rows[i], lv_color_hex(tx), 0);
+        lv_obj_set_style_text_color(s_desc[i], lv_color_hex(dx), 0);
     }
 }
 
 static void menu_build(void) {
-    s_menu_scr = ui_pixel_screen_create("PUZZLES");
+    s_menu_scr = ui_echo_screen("ECHO");
 
-    // 2 列网格(8 项 = 4 行):末行(第 7/8 项)底边含阴影约 y=239,
-    // 仍不遮住 y=242 的吉祥物。新增项继续沿用此排布。
+    lv_obj_t *sub = ui_echo_label(s_menu_scr, "PASSIVE WIFI ECHOLOCATION",
+                                  &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 10, 34);
+
+    // 两张大卡片竖排。
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        int x = 11 + (int)(i % 2) * 112;
-        int y = 52 + (int)(i / 2) * 47;
-        s_cards[i] = ui_pixel_panel_create(s_menu_scr, x, y, 102, 40, UI_PAPER);
-        s_rows[i] = lv_label_create(s_cards[i]);
-        lv_obj_set_style_text_font(s_rows[i], &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_align(s_rows[i], LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(s_rows[i]);
+        int y = 70 + (int)i * 88;
+        s_cards[i] = ui_echo_panel(s_menu_scr, 8, y, 224, 78);
+        s_rows[i] = ui_echo_label(s_cards[i], DEMOS[i].name,
+                                  &lv_font_montserrat_20, ECHO_TEXT);
+        lv_obj_align(s_rows[i], LV_ALIGN_TOP_LEFT, 4, 10);
+        s_desc[i] = ui_echo_label(s_cards[i], DEMO_DESC[i],
+                                  &lv_font_montserrat_14, ECHO_MUTED);
+        lv_obj_align(s_desc[i], LV_ALIGN_BOTTOM_LEFT, 4, -10);
     }
-
-    s_mascot = ui_pixel_mascot_create(s_menu_scr, 101, 242);
 
     menu_refresh();
     lv_screen_load(s_menu_scr);
@@ -110,13 +115,9 @@ static void dispatch_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
         if (btn == BSP_BTN_DOWN) { s_sel = (s_sel + 1) % DEMO_COUNT;              menu_refresh(); }
         if (btn == BSP_BTN_OK && s_ok[s_sel]) {
             s_active = s_sel;
-            ui_pixel_mascot_jump(s_mascot);
             lv_obj_delete(s_menu_scr);
             s_menu_scr = NULL;
-            s_mascot = NULL;
             DEMOS[s_active].enter();
-        } else if (btn == BSP_BTN_UP || btn == BSP_BTN_DOWN) {
-            ui_pixel_mascot_jump(s_mascot);
         }
     }
 }
@@ -134,8 +135,7 @@ static void key_timer_cb(lv_timer_t *timer) {
 }
 
 // 按键回调运行在 esp_timer 任务里 —— iot_button 的扫描和 esp_lvgl_port 的
-// lv_tick_inc 共用这一个任务,所以这里绝不能阻塞等 LVGL 锁:那会同时冻住按键
-// 状态机和 LVGL 时基,而且数独出题持锁几百毫秒时还会让 bsp_lvgl_lock 超时丢键。
+// lv_tick_inc 共用这一个任务,所以这里绝不能阻塞等 LVGL 锁。
 // 这里只做一次非阻塞投递,分发交给 LVGL 任务里的 key_timer_cb。
 static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
     (void)user;
@@ -147,7 +147,7 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
 }
 
 void app_main(void) {
-    ESP_LOGI(TAG, "FoloToy AI Passport 游戏卡带启动");
+    ESP_LOGI(TAG, "FoloToy AI Passport · ECHO 启动");
     esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
     if (wakeup != ESP_SLEEP_WAKEUP_UNDEFINED) {
         ESP_LOGI(TAG, "休眠唤醒原因: %d", wakeup);
@@ -156,8 +156,7 @@ void app_main(void) {
     bsp_i2c_init();
     bsp_i2c_scan();
 
-    // 屏幕是本固件的 UI 载体,失败就没有菜单可言 —— 打清楚日志后退出,
-    // 不做"串口菜单"降级(那会让本文件复杂一倍,违背参考示例的初衷)。
+    // 屏幕是本固件的 UI 载体,失败就没有菜单可言 —— 打清楚日志后退出。
     if (bsp_display_init() != ESP_OK || !bsp_lvgl_init()) {
         ESP_LOGE(TAG, "显示/LVGL 初始化失败,固件无法继续。"
                       "检查 SPI 接线(MOSI=%d SCLK=%d CS=%d DC=%d BL=%d)",
@@ -172,29 +171,16 @@ void app_main(void) {
         ESP_LOGE(TAG, "按键队列创建失败,按键将不可用");
     }
 
-    // 其余外设单项失败不阻塞:菜单里标 [FAIL],其他项照常可测。
-    bool button_ok  = (bsp_button_init(on_key, NULL) == ESP_OK);
-    bool audio_ok   = (bsp_audio_init() == ESP_OK);
-    bool battery_ok = (bsp_battery_init() == ESP_OK);
-
-    s_ok[0] = button_ok;      // Sudoku:要屏(已确认)+ 按键
-    s_ok[1] = button_ok;      // Mines: 同上
-    s_ok[2] = true;           // Display 已确认可用
-    s_ok[3] = button_ok;
-    s_ok[4] = audio_ok;
-    s_ok[5] = battery_ok;
-    s_ok[6] = button_ok;      // ECHO (WiFi CSI):可进入,网络失败在屏上报
-    s_ok[7] = button_ok;      // RADAR:被动嗅探,可进入,失败在屏上报
+    bool button_ok = (bsp_button_init(on_key, NULL) == ESP_OK);
+    s_ok[0] = button_ok;      // ECHO:可进入,网络失败在屏上报
+    s_ok[1] = button_ok;      // RADAR:可进入,失败在屏上报
 
     if (bsp_lvgl_lock(1000)) {
         enter_menu();
-        // 开机初始化期间(bsp_battery_init 最多等 5 秒)按下的键不该在菜单一出来
-        // 就补放一遍,先清空队列再开始 drain。
         if (s_key_queue) xQueueReset(s_key_queue);
         s_key_timer = lv_timer_create(key_timer_cb, KEY_DRAIN_MS, NULL);
         bsp_lvgl_unlock();
     }
 
-    ESP_LOGI(TAG, "就绪:Display=1 Button=%d Audio=%d Battery=%d",
-             button_ok, audio_ok, battery_ok);
+    ESP_LOGI(TAG, "就绪:Display=1 Button=%d", button_ok);
 }

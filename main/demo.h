@@ -11,26 +11,6 @@ typedef struct {
     void (*key)(bsp_btn_t btn, bsp_btn_ev_t ev);  // 收按键(长按确定已被 main 拦截)
 } demo_entry_t;
 
-// 游戏页(纯游戏卡带的主角,定义在各自的 .c 里)
-void demo_sudoku_enter(void); void demo_sudoku_exit(void);
-void demo_sudoku_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-void demo_mines_enter(void);   void demo_mines_exit(void);
-void demo_mines_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-// 硬件自检页
-void demo_display_enter(void); void demo_display_exit(void);
-void demo_display_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-void demo_button_enter(void);  void demo_button_exit(void);
-void demo_button_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-void demo_audio_enter(void);   void demo_audio_exit(void);
-void demo_audio_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-void demo_battery_enter(void); void demo_battery_exit(void);
-void demo_battery_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
 // 被动 WiFi CSI 采集(在场/运动检测)
 void demo_csi_enter(void);      void demo_csi_exit(void);
 void demo_csi_key(bsp_btn_t btn, bsp_btn_ev_t ev);

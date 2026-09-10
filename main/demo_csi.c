@@ -19,7 +19,7 @@
 #include "csi_metric.h"
 #include "csi_proto.h"
 #include "csi_ble.h"
-#include "ui_pixel.h"
+#include "ui_echo.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,13 +49,17 @@ static const char *TAG = "demo_csi";
 // 采集内部状态(映射到协议 st:off/connecting/running/failed)。
 enum { CAP_CONNECTING = 0, CAP_CONNECTED, CAP_FAILED };
 
+#define CSI_BARS 16  // 屏上子载波热力条数量(由幅度降采样而来,仅展示用)
+
 // --- LVGL 对象(仅 LVGL task 访问)---
 static lv_obj_t   *s_scr;
-static lv_obj_t   *s_status;
+static lv_obj_t   *s_status;     // 状态行:SSID / 连接态
+static lv_obj_t   *s_rssi_lbl;   // 状态行右侧 RSSI
+static lv_obj_t   *s_arc;        // 半圆运动分仪表
+static lv_obj_t   *s_motion_num; // 仪表中央大数字
+static lv_obj_t   *s_heat[CSI_BARS];  // 子载波热力条
 static lv_obj_t   *s_rate;
 static lv_obj_t   *s_dist;
-static lv_obj_t   *s_motion_lbl;
-static lv_obj_t   *s_bar;
 static lv_timer_t *s_ui_timer;
 static uint32_t    s_ui_last_ms;
 static uint32_t    s_ui_last_count;
@@ -76,6 +80,7 @@ static volatile int      s_rate_pps;     // CSI pkt/s(由 ui_tick 计算)
 static volatile uint32_t s_pkt_count;
 static volatile int      s_ftm_cm;       // 距离 cm(0 = 无效)
 static volatile int      s_ftm_valid;    // 0/1
+static volatile int      s_bars[CSI_BARS]; // 子载波幅度 16-bin 归一化(0..100)
 static char              s_ssid[33];
 
 // --- 采集资源(仅后台 task / 其回调持有)---
@@ -152,6 +157,23 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info)
     s_motion = motion;
     s_rssi = info->rx_ctrl.rssi;
     s_pkt_count++;
+
+    // 把 n 个子载波幅度降采样成 16 个 bin 并按帧内最大值归一化,喂给屏上热力条。
+    // 纯展示派生量,不改变采集/回调行为。
+    if (n > 0) {
+        float mx = 0.0f;
+        for (int i = 0; i < n; i++) if (amp[i] > mx) mx = amp[i];
+        for (int b = 0; b < CSI_BARS; b++) {
+            int lo = b * n / CSI_BARS;
+            int hi = (b + 1) * n / CSI_BARS;
+            if (hi <= lo) hi = lo + 1;
+            float sum = 0.0f;
+            int cntb = 0;
+            for (int i = lo; i < hi && i < n; i++) { sum += amp[i]; cntb++; }
+            float avg = cntb ? sum / (float)cntb : 0.0f;
+            s_bars[b] = (mx > 0.0f) ? (int)(avg / mx * 100.0f) : 0;
+        }
+    }
 
     const wifi_pkt_rx_ctrl_t *rx = &info->rx_ctrl;
     printf("CSI_DATA,%u,%u,%d,%u,%d,%u,%d,%u,[",
@@ -462,16 +484,23 @@ static void ui_tick(lv_timer_t *t)
     char ssid[33];
     get_ssid(ssid, sizeof(ssid));
 
+    // 状态行:SSID + 连接态配色。
+    uint32_t scol;
     switch (st) {
-    case 0: lv_label_set_text(s_status, "Idle (stopped)"); break;
-    case 1: lv_label_set_text_fmt(s_status, "Connecting: %s",
-                                  ssid[0] ? ssid : "(no ssid)"); break;
-    case 2: lv_label_set_text_fmt(s_status, "Linked: %s", ssid); break;
+    case 0: lv_label_set_text(s_status, "IDLE"); scol = ECHO_MUTED; break;
+    case 1: lv_label_set_text_fmt(s_status, "%s",
+                ssid[0] ? ssid : "connecting..."); scol = ECHO_AMBER; break;
+    case 2: lv_label_set_text_fmt(s_status, "%s", ssid); scol = ECHO_GREEN; break;
     default:
         lv_label_set_text(s_status,
-            ssid[0] ? "Connect failed" : "No WiFi: set in menuconfig");
+            ssid[0] ? "connect failed" : "set WiFi in menuconfig");
+        scol = ECHO_RED;
         break;
     }
+    lv_obj_set_style_text_color(s_status, lv_color_hex(scol), 0);
+
+    if (st == 2) lv_label_set_text_fmt(s_rssi_lbl, "%ddB", s_rssi);
+    else         lv_label_set_text(s_rssi_lbl, "--");
 
     uint32_t now = lv_tick_get();
     uint32_t cnt = s_pkt_count;
@@ -482,23 +511,39 @@ static void ui_tick(lv_timer_t *t)
             pps = (int)(((uint64_t)(cnt - s_ui_last_count) * 1000U) / dms);
         }
         s_rate_pps = pps;
-        lv_label_set_text_fmt(s_rate, "%d pkt/s", pps);
+        lv_label_set_text_fmt(s_rate, "%d/s", pps);
     } else {
         s_rate_pps = 0;
-        lv_label_set_text(s_rate, "");
+        lv_label_set_text(s_rate, "--");
     }
     s_ui_last_ms = now;
     s_ui_last_count = cnt;
 
     if (s_ftm_valid) {
-        lv_label_set_text_fmt(s_dist, "Dist: %d cm", s_ftm_cm);
+        lv_label_set_text_fmt(s_dist, "%dcm", s_ftm_cm);
+        lv_obj_set_style_text_color(s_dist, lv_color_hex(ECHO_GREEN), 0);
     } else {
-        lv_label_set_text(s_dist, "Dist: N/A");
+        lv_label_set_text(s_dist, "N/A");
+        lv_obj_set_style_text_color(s_dist, lv_color_hex(ECHO_RED), 0);
     }
 
+    // 运动分半圆仪表 + 中央数字。
     int motion = s_motion;
-    lv_bar_set_value(s_bar, motion, LV_ANIM_OFF);
-    lv_label_set_text_fmt(s_motion_lbl, "Motion %d", motion);
+    lv_arc_set_value(s_arc, motion);
+    lv_obj_set_style_arc_color(s_arc,
+        lv_color_hex(ui_echo_motion_color(motion)), LV_PART_INDICATOR);
+    lv_label_set_text_fmt(s_motion_num, "%d", motion);
+
+    // 子载波热力条:高度按归一化幅度、颜色按热力色阶。
+    for (int b = 0; b < CSI_BARS; b++) {
+        int lvl = s_bars[b];
+        if (lvl < 0) lvl = 0;
+        if (lvl > 100) lvl = 100;
+        lv_obj_set_height(s_heat[b], 3 + lvl * 25 / 100);
+        lv_obj_align(s_heat[b], LV_ALIGN_BOTTOM_LEFT, b * 13, 0);
+        lv_obj_set_style_bg_color(s_heat[b],
+            lv_color_hex(ui_echo_heat_color(lvl)), 0);
+    }
 }
 
 // ===========================================================================
@@ -531,46 +576,68 @@ void demo_csi_enter(void)
     if (!s_cmd_queue) s_cmd_queue = xQueueCreate(CSI_CMD_QUEUE_DEPTH, sizeof(csi_cmd_t));
     if (s_cmd_queue) xQueueReset(s_cmd_queue);
 
-    // enter 已在 LVGL task 上下文且已持锁,直接建屏。
-    s_scr = ui_pixel_screen_create("ECHO");
+    // enter 已在 LVGL task 上下文且已持锁,直接建屏。ECHO HUD 风格。
+    s_scr = ui_echo_screen("ECHO");
+    ui_echo_header_right(s_scr, "REC");
 
-    lv_obj_t *panel = ui_pixel_panel_create(s_scr, 16, 56, 208, 84, UI_PAPER);
-    s_status = lv_label_create(panel);
-    lv_obj_set_style_text_font(s_status, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_status, lv_color_hex(UI_INK), 0);
-    lv_label_set_long_mode(s_status, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_status, 190);
-    lv_obj_align(s_status, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_label_set_text(s_status, "Starting...");
+    // 状态行:SSID(左)+ RSSI(右)。
+    lv_obj_t *stp = ui_echo_panel(s_scr, 8, 34, 224, 22);
+    s_status = ui_echo_label(stp, "Starting...", &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_align(s_status, LV_ALIGN_LEFT_MID, 0, 0);
+    s_rssi_lbl = ui_echo_label(stp, "--", &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_align(s_rssi_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
 
-    s_dist = lv_label_create(panel);
-    lv_obj_set_style_text_font(s_dist, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_dist, lv_color_hex(UI_INK), 0);
-    lv_obj_align(s_dist, LV_ALIGN_LEFT_MID, 0, 6);
-    lv_label_set_text(s_dist, "Dist: N/A");
+    // 半圆运动分仪表(lv_arc:180..360 为上半圆)。
+    lv_obj_t *mp = ui_echo_panel(s_scr, 8, 60, 224, 104);
+    lv_obj_t *ml = ui_echo_label(mp, "MOTION", &lv_font_montserrat_14, ECHO_AMBER2);
+    lv_obj_align(ml, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    s_rate = lv_label_create(panel);
-    lv_obj_set_style_text_font(s_rate, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_rate, lv_color_hex(UI_SKY_DARK), 0);
-    lv_obj_align(s_rate, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_label_set_text(s_rate, "");
+    s_arc = lv_arc_create(mp);
+    lv_obj_set_size(s_arc, 150, 150);
+    lv_obj_align(s_arc, LV_ALIGN_TOP_MID, 0, 2);
+    lv_arc_set_bg_angles(s_arc, 180, 360);
+    lv_arc_set_range(s_arc, 0, 100);
+    lv_arc_set_value(s_arc, 0);
+    lv_obj_remove_flag(s_arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(s_arc, 14, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_arc, 14, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_arc, lv_color_hex(ECHO_ARCTRK), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_arc, lv_color_hex(ECHO_GREEN), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(s_arc, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_arc, 0, 0);
+    lv_obj_set_style_bg_opa(s_arc, LV_OPA_TRANSP, LV_PART_KNOB);  // 隐藏拖柄
 
-    lv_obj_t *motion_panel = ui_pixel_panel_create(s_scr, 16, 152, 208, 62, UI_MUTED);
-    s_motion_lbl = lv_label_create(motion_panel);
-    lv_obj_set_style_text_font(s_motion_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_motion_lbl, lv_color_hex(UI_INK), 0);
-    lv_obj_align(s_motion_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_label_set_text(s_motion_lbl, "Motion 0");
+    s_motion_num = ui_echo_label(mp, "0", &lv_font_montserrat_20, ECHO_TEXT);
+    lv_obj_align(s_motion_num, LV_ALIGN_TOP_MID, 0, 50);
 
-    s_bar = lv_bar_create(motion_panel);
-    lv_obj_set_size(s_bar, 190, 16);
-    lv_obj_align(s_bar, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_bar_set_range(s_bar, 0, 100);
-    lv_obj_set_style_bg_color(s_bar, lv_color_hex(UI_PAPER), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_bar, lv_color_hex(UI_GRASS), LV_PART_INDICATOR);
-    lv_bar_set_value(s_bar, 0, LV_ANIM_OFF);
+    // 子载波热力条(16 条,高度/颜色按幅度)。
+    lv_obj_t *ap = ui_echo_panel(s_scr, 8, 168, 224, 52);
+    lv_obj_t *al = ui_echo_label(ap, "CSI AMP", &lv_font_montserrat_14, ECHO_T_PC);
+    lv_obj_align(al, LV_ALIGN_TOP_LEFT, 0, 0);
+    for (int b = 0; b < CSI_BARS; b++) {
+        lv_obj_t *bar = lv_obj_create(ap);
+        lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(bar, 11, 4);
+        lv_obj_set_style_radius(bar, 0, 0);
+        lv_obj_set_style_border_width(bar, 0, 0);
+        lv_obj_set_style_pad_all(bar, 0, 0);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(0x1F6FE0), 0);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, b * 13, 0);
+        s_heat[b] = bar;
+    }
 
-    ui_pixel_mascot_create(s_scr, 101, 240);
+    // DIST / RATE 两个小面板。
+    lv_obj_t *dp = ui_echo_panel(s_scr, 8, 224, 108, 28);
+    lv_obj_t *dl = ui_echo_label(dp, "DIST", &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_align(dl, LV_ALIGN_LEFT_MID, 0, 0);
+    s_dist = ui_echo_label(dp, "N/A", &lv_font_montserrat_14, ECHO_RED);
+    lv_obj_align(s_dist, LV_ALIGN_RIGHT_MID, 0, 0);
+
+    lv_obj_t *rp = ui_echo_panel(s_scr, 124, 224, 108, 28);
+    lv_obj_t *rl = ui_echo_label(rp, "RATE", &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
+    s_rate = ui_echo_label(rp, "--", &lv_font_montserrat_14, ECHO_GREEN);
+    lv_obj_align(s_rate, LV_ALIGN_RIGHT_MID, 0, 0);
 
     ui_tick(NULL);
     s_ui_timer = lv_timer_create(ui_tick, CSI_UI_REFRESH_MS, NULL);
@@ -605,7 +672,8 @@ void demo_csi_exit(void)
     if (s_scr) {
         lv_obj_delete(s_scr);
         s_scr = NULL;
-        s_status = s_rate = s_dist = s_motion_lbl = s_bar = NULL;
+        s_status = s_rssi_lbl = s_arc = s_motion_num = s_rate = s_dist = NULL;
+        for (int b = 0; b < CSI_BARS; b++) s_heat[b] = NULL;
     }
 }
 
