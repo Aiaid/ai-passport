@@ -6,6 +6,8 @@
 
 ## Unreleased
 
+- 新增「纯游戏卡带」玩法分支 `feature/puzzle-games`：加入三键数独（`main/demo_sudoku.c` + `sudoku_model.c`，设备端迭代回溯出题并保证唯一解，三档难度）与三键扫雷（`main/demo_mines.c` + `mines_model.c`，9×9 十雷、首点安全、连锁展开、和弦翻开）；两者共用一块 216×216 I4 画布与内嵌像素字体（`main/puzzle_ui.c`）以适应 24 KB LVGL 池。菜单精简为 Sudoku / Mines / Display / Button / Audio / Battery 六项，移除 Wi-Fi、BLE、低功耗演示页。新增主机测试 `tests/test_sudoku_model.c`、`tests/test_mines_model.c` 并纳入 `tools/validate.sh --static`。
+
 - 加入厂家为优特利 520mAh 电芯生成的 80 字节 CW2017 profile，并实现内容与更新标志检查、写入后校验、规定的重启时序以及有上限的 SOC 就绪等待。
 
 - 扩充环境引导文档：新增乐鑫 Git 服务镜像（`git.espressif.com.cn`）作为中国大陆首选线路，覆盖 ESP-IDF v5.5.3 及其子模块；补充子模块长等待/超时处理、原地修复，以及 `esp32-wifi-lib` 等大仓的按钉死 commit 浅取；提示按仓库残留的 Jihulab `insteadOf` 旧配置；并把官方离线 release 压缩包加入兜底方案（经验来自 `esp-mosaico/esp-mosaico-vibe`）。

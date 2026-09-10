@@ -1,8 +1,12 @@
-// main/main.c —— FoloToy AI Passport BSP 驱动参考示例:初始化 + 菜单 + 按键分发。
+// main/main.c —— FoloToy AI Passport 纯游戏卡带:初始化 + 菜单 + 按键分发。
+//
+// 菜单六项:两个游戏(数独、扫雷)+ 四个硬件自检页。
 //
 // 按键语义(全局统一):
 //   上/下 短按   菜单中=移动选中项;演示页中=该页自定义
+//   上/下 长按   演示页中=该页自定义(游戏页用来跳一整行;数独 EDIT 下先放弃候选值再跳行)
 //   确定  短按   菜单中=进入选中项;演示页中=该页自定义
+//   确定  双击   演示页中=该页自定义(游戏页用来清空/插旗)
 //   确定  长按   演示页中=返回菜单(由本文件统一拦截)
 #include "bsp_i2c.h"
 #include "bsp_display.h"
@@ -15,17 +19,18 @@
 #include "lvgl.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
 static const char *TAG = "main";
 
 static const demo_entry_t DEMOS[] = {
+    { "Sudoku",  demo_sudoku_enter,  demo_sudoku_exit,  demo_sudoku_key  },
+    { "Mines",   demo_mines_enter,   demo_mines_exit,   demo_mines_key   },
     { "Display", demo_display_enter, demo_display_exit, demo_display_key },
     { "Button",  demo_button_enter,  demo_button_exit,  demo_button_key  },
     { "Audio",   demo_audio_enter,   demo_audio_exit,   demo_audio_key   },
     { "Battery", demo_battery_enter, demo_battery_exit, demo_battery_key },
-    { "Wi-Fi",   demo_wifi_enter,    demo_wifi_exit,    demo_wifi_key    },
-    { "BLE",     demo_ble_enter,     demo_ble_exit,     demo_ble_key     },
-    { "Low Power", demo_low_power_enter, demo_low_power_exit, demo_low_power_key },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
@@ -39,6 +44,18 @@ static lv_obj_t *s_mascot;
 static int  s_sel;                 // 当前选中项
 static int  s_active = -1;         // 当前所在演示页;-1 = 在菜单
 
+// 按键事件队列:按键回调只投递,真正的分发在 LVGL 任务里做(见 key_timer_cb)。
+typedef struct {
+    bsp_btn_t    btn;
+    bsp_btn_ev_t ev;
+} key_event_t;
+
+#define KEY_QUEUE_DEPTH 8
+#define KEY_DRAIN_MS    20
+
+static QueueHandle_t s_key_queue;
+static lv_timer_t   *s_key_timer;
+
 static void menu_refresh(void) {
     for (size_t i = 0; i < DEMO_COUNT; i++) {
         lv_label_set_text_fmt(s_rows[i], "%s%s",
@@ -51,8 +68,9 @@ static void menu_refresh(void) {
 }
 
 static void menu_build(void) {
-    s_menu_scr = ui_pixel_screen_create("FoloToy");
+    s_menu_scr = ui_pixel_screen_create("PUZZLES");
 
+    // 3 行 × 2 列:最后一行底边 y=186,不会遮住 y=242 的吉祥物。
     for (size_t i = 0; i < DEMO_COUNT; i++) {
         int x = 11 + (int)(i % 2) * 112;
         int y = 52 + (int)(i / 2) * 47;
@@ -74,11 +92,9 @@ static void enter_menu(void) {
     menu_build();
 }
 
-// 按键回调运行在 button 组件的任务里,操作 LVGL 必须加锁。
-static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
-    (void)user;
-    if (!bsp_lvgl_lock(500)) return;
-
+// 真正的分发。只在 LVGL 任务里被调用(key_timer_cb),此时锁已由 LVGL 任务持有,
+// 不得再调 bsp_lvgl_lock。
+static void dispatch_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     if (s_active >= 0) {
         if (btn == BSP_BTN_OK && ev == BSP_BTN_LONG) {     // 统一返回
             DEMOS[s_active].exit();
@@ -100,11 +116,35 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
             ui_pixel_mascot_jump(s_mascot);
         }
     }
-    bsp_lvgl_unlock();
+}
+
+// 跑在 LVGL 任务里(已持锁),每 20ms 把队列里攒下的按键一次性处理完。
+static void key_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+    key_event_t event;
+    while (s_key_queue && xQueueReceive(s_key_queue, &event, 0) == pdTRUE) {
+        // 菜单尚未建好(app_main 还卡在外设初始化上)时丢弃事件,
+        // 否则会对还是 NULL 的 s_rows[] 调 LVGL API。
+        if (s_active < 0 && !s_menu_scr) continue;
+        dispatch_key(event.btn, event.ev);
+    }
+}
+
+// 按键回调运行在 esp_timer 任务里 —— iot_button 的扫描和 esp_lvgl_port 的
+// lv_tick_inc 共用这一个任务,所以这里绝不能阻塞等 LVGL 锁:那会同时冻住按键
+// 状态机和 LVGL 时基,而且数独出题持锁几百毫秒时还会让 bsp_lvgl_lock 超时丢键。
+// 这里只做一次非阻塞投递,分发交给 LVGL 任务里的 key_timer_cb。
+static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
+    (void)user;
+    if (!s_key_queue) return;
+    key_event_t event = { .btn = btn, .ev = ev };
+    if (xQueueSend(s_key_queue, &event, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "按键队列已满,丢弃 btn=%d ev=%d", btn, ev);
+    }
 }
 
 void app_main(void) {
-    ESP_LOGI(TAG, "FoloToy AI Passport BSP demo 启动");
+    ESP_LOGI(TAG, "FoloToy AI Passport 游戏卡带启动");
     esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
     if (wakeup != ESP_SLEEP_WAKEUP_UNDEFINED) {
         ESP_LOGI(TAG, "休眠唤醒原因: %d", wakeup);
@@ -113,27 +153,43 @@ void app_main(void) {
     bsp_i2c_init();
     bsp_i2c_scan();
 
-    // 屏幕是本 demo 的 UI 载体,失败就没有菜单可言 —— 打清楚日志后退出,
+    // 屏幕是本固件的 UI 载体,失败就没有菜单可言 —— 打清楚日志后退出,
     // 不做"串口菜单"降级(那会让本文件复杂一倍,违背参考示例的初衷)。
     if (bsp_display_init() != ESP_OK || !bsp_lvgl_init()) {
-        ESP_LOGE(TAG, "显示/LVGL 初始化失败,demo 无法继续。"
+        ESP_LOGE(TAG, "显示/LVGL 初始化失败,固件无法继续。"
                       "检查 SPI 接线(MOSI=%d SCLK=%d CS=%d DC=%d BL=%d)",
                  BSP_LCD_MOSI, BSP_LCD_SCLK, BSP_LCD_CS, BSP_LCD_DC, BSP_LCD_BL);
         return;
     }
     bsp_display_backlight(100);
 
+    // 队列必须早于 bsp_button_init 建好:回调一旦武装,按键随时可能进来。
+    s_key_queue = xQueueCreate(KEY_QUEUE_DEPTH, sizeof(key_event_t));
+    if (!s_key_queue) {
+        ESP_LOGE(TAG, "按键队列创建失败,按键将不可用");
+    }
+
     // 其余外设单项失败不阻塞:菜单里标 [FAIL],其他项照常可测。
-    s_ok[0] = true;                                   // Display 已确认可用
-    s_ok[1] = (bsp_button_init(on_key, NULL) == ESP_OK);
-    s_ok[2] = (bsp_audio_init() == ESP_OK);
-    s_ok[3] = (bsp_battery_init() == ESP_OK);
-    s_ok[4] = true;                                    // 页面内按需初始化并显示错误
-    s_ok[5] = true;
-    s_ok[6] = true;
+    bool button_ok  = (bsp_button_init(on_key, NULL) == ESP_OK);
+    bool audio_ok   = (bsp_audio_init() == ESP_OK);
+    bool battery_ok = (bsp_battery_init() == ESP_OK);
 
-    if (bsp_lvgl_lock(1000)) { enter_menu(); bsp_lvgl_unlock(); }
+    s_ok[0] = button_ok;      // Sudoku:要屏(已确认)+ 按键
+    s_ok[1] = button_ok;      // Mines: 同上
+    s_ok[2] = true;           // Display 已确认可用
+    s_ok[3] = button_ok;
+    s_ok[4] = audio_ok;
+    s_ok[5] = battery_ok;
 
-    ESP_LOGI(TAG, "就绪:Display=%d Button=%d Audio=%d Battery=%d",
-             s_ok[0], s_ok[1], s_ok[2], s_ok[3]);
+    if (bsp_lvgl_lock(1000)) {
+        enter_menu();
+        // 开机初始化期间(bsp_battery_init 最多等 5 秒)按下的键不该在菜单一出来
+        // 就补放一遍,先清空队列再开始 drain。
+        if (s_key_queue) xQueueReset(s_key_queue);
+        s_key_timer = lv_timer_create(key_timer_cb, KEY_DRAIN_MS, NULL);
+        bsp_lvgl_unlock();
+    }
+
+    ESP_LOGI(TAG, "就绪:Display=1 Button=%d Audio=%d Battery=%d",
+             button_ok, audio_ok, battery_ok);
 }

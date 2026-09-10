@@ -11,7 +11,14 @@ typedef struct {
     void (*key)(bsp_btn_t btn, bsp_btn_ev_t ev);  // 收按键(长按确定已被 main 拦截)
 } demo_entry_t;
 
-// 各演示页(定义在各自的 .c 里)
+// 游戏页(纯游戏卡带的主角,定义在各自的 .c 里)
+void demo_sudoku_enter(void); void demo_sudoku_exit(void);
+void demo_sudoku_key(bsp_btn_t btn, bsp_btn_ev_t ev);
+
+void demo_mines_enter(void);   void demo_mines_exit(void);
+void demo_mines_key(bsp_btn_t btn, bsp_btn_ev_t ev);
+
+// 硬件自检页
 void demo_display_enter(void); void demo_display_exit(void);
 void demo_display_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 
@@ -23,12 +30,3 @@ void demo_audio_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 
 void demo_battery_enter(void); void demo_battery_exit(void);
 void demo_battery_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-void demo_wifi_enter(void);    void demo_wifi_exit(void);
-void demo_wifi_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-void demo_ble_enter(void);     void demo_ble_exit(void);
-void demo_ble_key(bsp_btn_t btn, bsp_btn_ev_t ev);
-
-void demo_low_power_enter(void); void demo_low_power_exit(void);
-void demo_low_power_key(bsp_btn_t btn, bsp_btn_ev_t ev);

@@ -6,6 +6,8 @@
 
 ## Unreleased
 
+- Added the pure game-cartridge branch `feature/puzzle-games`: a three-button Sudoku (`main/demo_sudoku.c` + `sudoku_model.c`, on-device iterative backtracking generator with uniqueness guarantee and three difficulty levels) and a three-button Minesweeper (`main/demo_mines.c` + `mines_model.c`, 9×9 with ten mines, safe first reveal, flood reveal, and chording). Both share one 216×216 I4 canvas and an embedded pixel font (`main/puzzle_ui.c`) to fit the 24 KB LVGL pool. The menu is trimmed to six entries (Sudoku / Mines / Display / Button / Audio / Battery); the Wi-Fi, BLE, and low-power demo pages are removed. Added host tests `tests/test_sudoku_model.c` and `tests/test_mines_model.c`, wired into `tools/validate.sh --static`.
+
 - Added the supplied 80-byte CW2017 profile for the specified 520 mAh cell, including content/update-flag checks, verified writes, the required restart sequence, and bounded SOC-readiness polling.
 
 - Expanded the environment bootstrap document: added Espressif's Git service mirror (`git.espressif.com.cn`) as the preferred mainland-China route for ESP-IDF v5.5.3 and its submodules, documented submodule long-wait/timeout handling, in-place repair, and the pinned-commit shallow fetch for large submodules such as `esp32-wifi-lib`, warned about stale per-repository Jihulab `insteadOf` residue, and added the official offline release archive as a last-resort fallback (learned from `esp-mosaico/esp-mosaico-vibe`).
