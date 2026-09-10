@@ -35,7 +35,7 @@ lv_obj_t *ui_echo_screen(const char *title)
     lv_obj_set_style_bg_grad_dir(hdr, LV_GRAD_DIR_HOR, 0);
 
     lv_obj_t *t = lv_label_create(hdr);
-    lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(t, ui_echo_font(true), 0);  // 标题可能是中文(如"设置")
     lv_obj_set_style_text_color(t, lv_color_hex(ECHO_HDRTEXT), 0);
     lv_label_set_text(t, title);
     lv_obj_align(t, LV_ALIGN_LEFT_MID, 8, 0);
@@ -47,7 +47,7 @@ lv_obj_t *ui_echo_header_right(lv_obj_t *scr, const char *text)
     // header 是 scr 的第 0 个子对象。
     lv_obj_t *hdr = lv_obj_get_child(scr, 0);
     lv_obj_t *r = lv_label_create(hdr);
-    lv_obj_set_style_text_font(r, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(r, ui_echo_font(false), 0);  // 一般 ASCII,仍随语言取字体
     lv_obj_set_style_text_color(r, lv_color_hex(ECHO_HDRTEXT), 0);
     lv_label_set_text(r, text ? text : "");
     lv_obj_align(r, LV_ALIGN_RIGHT_MID, -8, 0);
