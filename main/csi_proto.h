@@ -17,6 +17,7 @@ typedef enum {
     CSI_CMD_MODE,       // 远程切模式(mode 字段 "echo"/"radar")
     CSI_CMD_SENS,       // 调灵敏度(alpha/scale)
     CSI_CMD_OCC_TH,     // 占用阈值(v)
+    CSI_CMD_CALIB,      // 重新自标定空场基线
 } csi_cmd_kind_t;
 
 typedef struct {

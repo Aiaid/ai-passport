@@ -45,8 +45,9 @@ static const char *TAG = "demo_csi";
 #define CSI_MOTION_SCALE       8.0f
 #define CSI_CONNECT_TIMEOUT_MS 15000
 #define CSI_UI_REFRESH_MS      300
-#define CSI_OCC_T1_S           3    // 进入占用所需持续"有动"秒数
-#define CSI_OCC_T2_S           10   // 进入空置所需持续"无动"秒数
+#define CSI_OCC_T1_S           2    // 进入占用所需持续"有动"秒数(较灵敏)
+#define CSI_OCC_T2_S           6    // 进入空置所需持续"无动"秒数(中值已抗尖峰)
+#define CSI_CALIB_SAMPLES      24   // 自标定采样数(~3.3Hz 约 7s 空场)
 
 // 采集内部状态(映射到协议 st:off/connecting/running/failed)。
 enum { CAP_CONNECTING = 0, CAP_CONNECTED, CAP_FAILED };
@@ -62,7 +63,8 @@ static lv_obj_t   *s_motion_num; // 仪表中央大数字
 static lv_obj_t   *s_heat[CSI_BARS];  // 子载波热力条
 static lv_obj_t   *s_rate;
 static lv_obj_t   *s_dist;
-static lv_obj_t   *s_occ_lbl;    // 占用指示
+static lv_obj_t   *s_occ_lbl;    // 占用指示(主)
+static lv_obj_t   *s_occ_sub;    // 占用指示(副:链路/校准提示)
 static lv_timer_t *s_ui_timer;
 static uint32_t    s_ui_last_ms;
 static uint32_t    s_ui_last_count;
@@ -72,10 +74,14 @@ static TaskHandle_t  s_worker;
 static volatile bool s_stop_req;
 static volatile bool s_worker_alive;
 
-// 占用检测(仅 LVGL task/ui_tick 访问)。
-static occupancy_t s_occ;
-static int         s_occ_val;
-static int         s_occ_s;
+// 占用检测 + 自标定(仅 LVGL task/ui_tick 访问;s_recalib_req 跨任务置位)。
+static occupancy_t       s_occ;
+static int               s_occ_val;
+static int               s_occ_s;
+static volatile bool     s_recalib_req;   // 双击/BLE calib 请求重标定
+static bool              s_calibrating;
+static int               s_calib_buf[CSI_CALIB_SAMPLES];
+static int               s_calib_n;
 
 // --- 共享状态(int 用 volatile;ssid 用互斥量保护)---
 static SemaphoreHandle_t s_lock;
@@ -430,6 +436,7 @@ static void handle_cmd(const csi_cmd_t *cmd)
     case CSI_CMD_STOP:    capture_stop(); break;
     case CSI_CMD_FTM:     trigger_ftm(); break;
     case CSI_CMD_PING_MS: update_ping_interval(cmd->v); break;
+    case CSI_CMD_CALIB:   s_recalib_req = true; break;  // ui_tick 里重启标定
     default: break;
     }
 }
@@ -538,21 +545,49 @@ static void ui_tick(lv_timer_t *t)
             lv_color_hex(ui_echo_heat_color(lvl)), 0);
     }
 
-    // 灵敏度/阈值随面板下发实时生效。
+    // 灵敏度随面板下发实时生效(显示仪表用轻平滑,保持灵敏)。
     float a, sc;
     echo_state_get_sens(&a, &sc);
     csi_motion_set_params(&s_filt, a, sc);
-    occupancy_set_threshold(&s_occ, echo_state_get_occ_th());
 
-    // 占用去抖(以固定刷新周期为步长)。
-    s_occ_val = occupancy_update(&s_occ, motion, CSI_UI_REFRESH_MS);
-    s_occ_s = occupancy_seconds(&s_occ);
-    if (s_occ_val) {
-        lv_label_set_text_fmt(s_occ_lbl, "OCCUPIED  %ds", s_occ_s);
-        lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_GREEN), 0);
+    // 双击 / BLE calib 触发重标定。
+    if (s_recalib_req) {
+        s_recalib_req = false;
+        s_calibrating = true;
+        s_calib_n = 0;
+    }
+
+    if (s_calibrating) {
+        // 学习空场基线:仅在 CSI 已流动(running)时采样。
+        if (st == 2 && s_calib_n < CSI_CALIB_SAMPLES) {
+            s_calib_buf[s_calib_n++] = motion;
+        }
+        if (s_calib_n >= CSI_CALIB_SAMPLES) {
+            int th = occupancy_calibrate_threshold(s_calib_buf, s_calib_n);
+            echo_state_set_occ_th(th);
+            occupancy_init(&s_occ, th, CSI_OCC_T1_S, CSI_OCC_T2_S);
+            s_calibrating = false;
+        }
+        s_occ_val = 0;
+        s_occ_s = 0;
+        lv_label_set_text(s_occ_lbl, "CALIBRATING");
+        lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_AMBER), 0);
+        lv_label_set_text(s_occ_sub, "please leave area");
+        lv_obj_set_style_text_color(s_occ_sub, lv_color_hex(ECHO_AMBER2), 0);
     } else {
-        lv_label_set_text_fmt(s_occ_lbl, "EMPTY  %ds", s_occ_s);
-        lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_MUTED), 0);
+        // 阈值随面板 occ_th 命令实时生效(手动优先于自标定值)。
+        occupancy_set_threshold(&s_occ, echo_state_get_occ_th());
+        s_occ_val = occupancy_update(&s_occ, motion, CSI_UI_REFRESH_MS);
+        s_occ_s = occupancy_seconds(&s_occ);
+        if (s_occ_val) {
+            lv_label_set_text_fmt(s_occ_lbl, "OCCUPIED  %ds", s_occ_s);
+            lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_GREEN), 0);
+        } else {
+            lv_label_set_text_fmt(s_occ_lbl, "EMPTY  %ds", s_occ_s);
+            lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_MUTED), 0);
+        }
+        lv_label_set_text(s_occ_sub, "link: device <> AP");
+        lv_obj_set_style_text_color(s_occ_sub, lv_color_hex(ECHO_MUTED), 0);
     }
 
     // 把当前状态写入共享结构,供常驻 BLE 的 STATUS 通知读取。
@@ -591,6 +626,10 @@ void demo_csi_enter(void)
     occupancy_init(&s_occ, echo_state_get_occ_th(), CSI_OCC_T1_S, CSI_OCC_T2_S);
     s_occ_val = 0;
     s_occ_s = 0;
+    // 进模式自动跑一次空场自标定(CSI 流动后采样 ~7s)。
+    s_recalib_req = false;
+    s_calibrating = true;
+    s_calib_n = 0;
 
     // enter 已在 LVGL task 上下文且已持锁,直接建屏。ECHO HUD 风格。
     s_scr = ui_echo_screen("ECHO");
@@ -655,10 +694,12 @@ void demo_csi_enter(void)
     s_rate = ui_echo_label(rp, "--", &lv_font_montserrat_14, ECHO_GREEN);
     lv_obj_align(s_rate, LV_ALIGN_RIGHT_MID, 0, 0);
 
-    // 占用指示(醒目):OCCUPIED/EMPTY + 持续秒数。
-    lv_obj_t *op = ui_echo_panel(s_scr, ECHO_SAFE, 254, ECHO_BODY_W, 34);
-    s_occ_lbl = ui_echo_label(op, "EMPTY 0s", &lv_font_montserrat_20, ECHO_MUTED);
-    lv_obj_center(s_occ_lbl);
+    // 占用指示(醒目):主行 OCCUPIED/EMPTY/CALIBRATING,副行链路/校准提示。
+    lv_obj_t *op = ui_echo_panel(s_scr, ECHO_SAFE, 252, ECHO_BODY_W, 42);
+    s_occ_lbl = ui_echo_label(op, "CALIBRATING", &lv_font_montserrat_20, ECHO_AMBER);
+    lv_obj_align(s_occ_lbl, LV_ALIGN_TOP_MID, 0, 0);
+    s_occ_sub = ui_echo_label(op, "please leave area", &lv_font_montserrat_14, ECHO_AMBER2);
+    lv_obj_align(s_occ_sub, LV_ALIGN_BOTTOM_MID, 0, 0);
 
     ui_tick(NULL);
     s_ui_timer = lv_timer_create(ui_tick, CSI_UI_REFRESH_MS, NULL);
@@ -696,13 +737,15 @@ void demo_csi_exit(void)
         lv_obj_delete(s_scr);
         s_scr = NULL;
         s_status = s_rssi_lbl = s_arc = s_motion_num = s_rate = s_dist = NULL;
-        s_occ_lbl = NULL;
+        s_occ_lbl = s_occ_sub = NULL;
         for (int b = 0; b < CSI_BARS; b++) s_heat[b] = NULL;
     }
 }
 
 void demo_csi_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
-    (void)btn;
-    (void)ev;  // OK 长按返回由 main 统一拦截;本页无其它按键语义。
+    // OK 双击:重新自标定空场基线(OK 长按返回由 main 统一拦截)。
+    if (btn == BSP_BTN_OK && ev == BSP_BTN_DOUBLE) {
+        s_recalib_req = true;
+    }
 }

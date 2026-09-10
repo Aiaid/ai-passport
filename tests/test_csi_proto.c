@@ -59,6 +59,7 @@ static void test_parse_v1(void)
     assert(csi_proto_parse_control("{\"cmd\":\"start\"}", &c) && c.kind == CSI_CMD_START);
     assert(csi_proto_parse_control("{\"cmd\":\"stop\"}", &c) && c.kind == CSI_CMD_STOP);
     assert(csi_proto_parse_control("{\"cmd\":\"ftm\"}", &c) && c.kind == CSI_CMD_FTM);
+    assert(csi_proto_parse_control("{\"cmd\":\"calib\"}", &c) && c.kind == CSI_CMD_CALIB);
     assert(csi_proto_parse_control("{\"cmd\":\"ping_ms\",\"v\":5}", &c) && c.v == 20);
     assert(csi_proto_parse_control("{\"cmd\":\"ping_ms\",\"v\":5000}", &c) && c.v == 2000);
 }

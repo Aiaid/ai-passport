@@ -9,10 +9,12 @@
 
 #define ECHO_CMD_QUEUE_DEPTH 8
 
-// 默认灵敏度/阈值(与 demo_csi 的初值一致)。
+// 默认灵敏度/阈值。occ_th=25 取自真机:空场运动分中值 ~16-18、人在 ~32,
+// 中值滤波后二者干净分离,25 居中(两侧各约 7 余量)。scale/alpha 维持原值,
+// 因为尖峰问题由占用模块的中值滤波解决,无需改变显示动态。
 #define DEF_ALPHA  0.2f
 #define DEF_SCALE  8.0f
-#define DEF_OCC_TH 30
+#define DEF_OCC_TH 25
 
 static SemaphoreHandle_t s_mtx;
 static QueueHandle_t     s_cmd_q;
