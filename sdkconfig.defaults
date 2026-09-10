@@ -53,3 +53,7 @@ CONFIG_BT_NIMBLE_NVS_PERSIST=n
 # C3 单天线需软件共存分时调度。显式开启以保证二者同时工作。
 CONFIG_ESP_COEX_ENABLED=y
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# 子集 CJK 字体(lv_font_conv 默认输出压缩位图,bitmap_format=1);
+# 不开这个 LVGL 9 无法解压 → 中文字形渲染为空白。必须启用。
+CONFIG_LV_USE_FONT_COMPRESSED=y
