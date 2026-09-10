@@ -10,6 +10,10 @@ This directory contains AI Passport engineering rules and reusable workflows, gr
 
 - [ai-guide.md](ai-guide.md): AI-assisted development workflow.
 
+## Applications
+
+- [wifi-csi-sensing.md](wifi-csi-sensing.md): ECHO, the passive Wi-Fi sensing application (CSI presence/motion tripwire, RADAR device discovery, BLE GATT contract, i18n).
+
 ## Engineering
 
 - [environment-setup.md](engineering/environment-setup.md): clean-machine bootstrap for AI agents, including international and mainland China download routes.

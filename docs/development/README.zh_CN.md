@@ -19,6 +19,10 @@
 
 - [ai-guide.zh_CN.md](ai-guide.zh_CN.md)：AI 开发工作流（面向 AI 编程助手：上下文建立、需求拆解、BSP 边界、验收交付格式）。
 
+## 应用（applications）
+
+- [wifi-csi-sensing.zh_CN.md](wifi-csi-sensing.zh_CN.md)：ECHO，被动 Wi-Fi 感知应用（CSI 在场/运动绊线、RADAR 设备发现、BLE GATT 契约、i18n）。
+
 ## 工程约定（engineering）
 
 - [environment-setup.zh_CN.md](engineering/environment-setup.zh_CN.md)：AI 在全新机器上的环境引导，包含国际与中国大陆下载线路。
