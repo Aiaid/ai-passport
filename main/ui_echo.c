@@ -11,12 +11,12 @@ lv_obj_t *ui_echo_screen(const char *title)
     lv_obj_set_style_border_width(scr, 0, 0);
     lv_obj_set_style_pad_all(scr, 0, 0);
 
-    // 顶部琥珀 header(设计稿的斜切角 LVGL 不原生,简化为直角条)。
+    // 顶部琥珀 header:圆角条,四周留安全边距(屏幕可视区是圆角矩形,贴边会被切)。
     lv_obj_t *hdr = lv_obj_create(scr);
     lv_obj_remove_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_pos(hdr, 0, 0);
-    lv_obj_set_size(hdr, 240, 30);
-    lv_obj_set_style_radius(hdr, 0, 0);
+    lv_obj_set_pos(hdr, ECHO_SAFE, ECHO_HDR_Y);
+    lv_obj_set_size(hdr, 240 - 2 * ECHO_SAFE, ECHO_HDR_H);
+    lv_obj_set_style_radius(hdr, 7, 0);
     lv_obj_set_style_border_width(hdr, 0, 0);
     lv_obj_set_style_pad_all(hdr, 0, 0);
     lv_obj_set_style_bg_color(hdr, lv_color_hex(ECHO_AMBER), 0);
@@ -27,7 +27,7 @@ lv_obj_t *ui_echo_screen(const char *title)
     lv_obj_set_style_text_font(t, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(t, lv_color_hex(ECHO_HDRTEXT), 0);
     lv_label_set_text(t, title);
-    lv_obj_align(t, LV_ALIGN_LEFT_MID, 10, 0);
+    lv_obj_align(t, LV_ALIGN_LEFT_MID, 8, 0);
     return scr;
 }
 
@@ -39,7 +39,7 @@ lv_obj_t *ui_echo_header_right(lv_obj_t *scr, const char *text)
     lv_obj_set_style_text_font(r, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(r, lv_color_hex(ECHO_HDRTEXT), 0);
     lv_label_set_text(r, text ? text : "");
-    lv_obj_align(r, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_align(r, LV_ALIGN_RIGHT_MID, -8, 0);
     return r;
 }
 
@@ -49,7 +49,7 @@ lv_obj_t *ui_echo_panel(lv_obj_t *parent, int x, int y, int w, int h)
     lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_pos(p, x, y);
     lv_obj_set_size(p, w, h);
-    lv_obj_set_style_radius(p, 3, 0);
+    lv_obj_set_style_radius(p, 7, 0);  // 小圆角,呼应屏幕物理圆角
     lv_obj_set_style_bg_color(p, lv_color_hex(ECHO_PANEL), 0);
     lv_obj_set_style_bg_grad_dir(p, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_border_color(p, lv_color_hex(ECHO_STROKE), 0);

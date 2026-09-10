@@ -16,6 +16,7 @@
 #include "demo_discovery.h"
 #include "demo_radio.h"
 #include "disco_class.h"
+#include "echo_state.h"
 #include "ui_echo.h"
 
 #include <stdio.h>
@@ -283,6 +284,11 @@ static void ui_tick(lv_timer_t *t)
     // 随机 MAC 的 STA 多被归为 UNKNOWN,单列一项以免"消失"。
     lv_label_set_text_fmt(s_cnt[4], "?  %d", cnt[DISCO_UNKNOWN]);
 
+    // 写入共享状态,供常驻 BLE 的 STATUS 通知(radar 形态)。
+    int st = s_failed ? 3 : (s_sniffing ? 2 : 1);
+    echo_state_set_radar(st, 0, cnt[DISCO_PHONE], cnt[DISCO_PC],
+                         cnt[DISCO_IOT], cnt[DISCO_AP], cnt[DISCO_UNKNOWN], n);
+
     for (int r = 0; r < ROW_MAX; r++) {
         if (r < n) {
             uint32_t col = type_color(snap[r].type);
@@ -332,11 +338,12 @@ void demo_discovery_enter(void)
     portEXIT_CRITICAL(&s_mux);
 
     // enter 已在 LVGL task 上下文且已持锁,直接建屏。ECHO HUD 风格。
+    echo_state_set_mode("radar");
     s_scr = ui_echo_screen("RADAR");
     s_total = ui_echo_header_right(s_scr, "x0");
 
     // 左上角装饰小雷达(同心圈 + blip;扫描线 LVGL 做不动,省略)。
-    lv_obj_t *radar = ui_echo_panel(s_scr, 8, 36, 86, 86);
+    lv_obj_t *radar = ui_echo_panel(s_scr, ECHO_SAFE, ECHO_BODY_Y, 84, 84);
     lv_obj_set_style_pad_all(radar, 0, 0);
     const int rings[3] = { 78, 50, 24 };
     for (int i = 0; i < 3; i++) {
@@ -364,7 +371,7 @@ void demo_discovery_enter(void)
     }
 
     // 右侧类型计数(颜色即类型)+ UNKNOWN。
-    lv_obj_t *cp = ui_echo_panel(s_scr, 100, 36, 132, 86);
+    lv_obj_t *cp = ui_echo_panel(s_scr, 100, ECHO_BODY_Y, 130, 84);
     const uint32_t cc[5] = { ECHO_T_PHONE, ECHO_T_PC, ECHO_T_IOT, ECHO_T_AP, 0x9E9E9E };
     const char *cinit[5] = { "PHONE  0", "PC  0", "IOT  0", "AP  0", "?  0" };
     for (int i = 0; i < 5; i++) {
@@ -374,7 +381,7 @@ void demo_discovery_enter(void)
 
     // 设备列表行(各自为 HUD 面板)。
     for (int r = 0; r < ROW_MAX; r++) {
-        lv_obj_t *row = ui_echo_panel(s_scr, 8, 128 + r * 34, 224, 30);
+        lv_obj_t *row = ui_echo_panel(s_scr, ECHO_SAFE, 130 + r * 34, ECHO_BODY_W, 30);
         lv_obj_set_style_pad_all(row, 3, 0);
 
         // 徽标 = 带底色的 label(2 字母)。
@@ -460,6 +467,8 @@ void demo_discovery_exit(void)
         esp_wifi_deinit();
         s_wifi_inited = false;
     }
+
+    echo_state_set_idle();  // STATUS 的 st 归 0,保留 mode
 
     // 最后删屏。
     if (s_scr) {

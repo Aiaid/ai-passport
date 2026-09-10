@@ -31,6 +31,9 @@ typedef struct {
 // 初始化。alpha 建议 0.1~0.5,scale 为"满量程对应的平均绝对偏差"(正数)。
 void csi_motion_init(csi_motion_t *m, float alpha, float scale);
 
+// 运行中调整灵敏度参数(不重置 EWMA 基线)。alpha<0 或 scale<=0 表示保持不变。
+void csi_motion_set_params(csi_motion_t *m, float alpha, float scale);
+
 // 输入一帧 n 个子载波的幅度,更新 EWMA 并返回运动分(0..100 整数)。
 // 首帧只播种基线、返回 0。n 会被 clamp 到 CSI_METRIC_MAX_SUBCARRIERS;
 // n<=0 返回 0。

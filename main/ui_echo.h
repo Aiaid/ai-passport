@@ -7,6 +7,13 @@
 
 #include "lvgl.h"
 
+// —— 安全区(屏幕可视区为圆角矩形:外圈留白、四角不放内容)——
+#define ECHO_SAFE    10   // 左右安全内边距
+#define ECHO_HDR_Y   8    // header 顶部留白
+#define ECHO_HDR_H   28   // header 高度(底边 = 8 + 28 = 36)
+#define ECHO_BODY_Y  40   // 内容起始 y(在 header 之下)
+#define ECHO_BODY_W  220  // 内容宽度(240 - 2*ECHO_SAFE)
+
 // —— HUD 基础色 ——
 #define ECHO_BG       0x0B1224  // 背景深蓝(渐变顶)
 #define ECHO_BG2      0x0A0F1C  // 背景深蓝(渐变底)

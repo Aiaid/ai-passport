@@ -1,5 +1,7 @@
 // main/csi_ble.c —— 见 csi_ble.h。
 #include "csi_ble.h"
+#include "csi_proto.h"
+#include "echo_state.h"
 
 #include <string.h>
 
@@ -19,7 +21,7 @@ static const char *TAG = "csi_ble";
 
 #define CSI_BLE_NAME          "AIPassport-CSI"
 #define CSI_NOTIFY_PERIOD_US  (300 * 1000)  // ~3.3Hz
-#define CSI_JSON_CAP          192
+#define CSI_JSON_CAP          256
 
 // 128-bit UUID 的字节序为小端(显示串的逆序)。三个 UUID 仅第 13 字节不同:
 //   e2e9000X-8f2a-4c7b-9f3d-1a2b3c4d5e6f,X = 1/2/3。
@@ -31,12 +33,8 @@ static const ble_uuid128_t s_svc_uuid     = CSI_UUID128(0x01);
 static const ble_uuid128_t s_status_uuid  = CSI_UUID128(0x02);
 static const ble_uuid128_t s_control_uuid = CSI_UUID128(0x03);
 
-static csi_ble_status_fn s_status_fn;
-static csi_ble_cmd_fn    s_cmd_fn;
-
 static bool              s_inited;
 static volatile bool     s_synced;
-static volatile bool     s_active;     // 本模式是否在用(gate 广播重启与通知)
 static uint8_t           s_own_addr_type;
 static uint16_t          s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t          s_status_val_handle;
@@ -45,8 +43,16 @@ static esp_timer_handle_t s_notify_timer;
 
 static void start_advertising(void);
 
-void csi_ble_set_status_provider(csi_ble_status_fn fn) { s_status_fn = fn; }
-void csi_ble_set_cmd_handler(csi_ble_cmd_fn fn)        { s_cmd_fn = fn; }
+// 解析出的命令按种类分流:mode→主循环切模式,sens/occ_th→更新参数,其余→命令队列。
+static void route_cmd(const csi_cmd_t *cmd)
+{
+    switch (cmd->kind) {
+    case CSI_CMD_MODE:   echo_state_request_mode(cmd->mode); break;
+    case CSI_CMD_SENS:   echo_state_set_sens(cmd->alpha, cmd->scale); break;
+    case CSI_CMD_OCC_TH: echo_state_set_occ_th(cmd->v); break;
+    default:             echo_state_post_cmd(cmd); break;  // start/stop/ftm/ping_ms
+    }
+}
 
 // GATT 读写回调。STATUS 读 → 写入当前状态 JSON;CONTROL 写 → 解析并转交命令。
 static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
@@ -58,10 +64,9 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR &&
         attr_handle == s_status_val_handle) {
         char js[CSI_JSON_CAP];
-        csi_status_t s = { 0 };
-        if (s_status_fn) s_status_fn(&s);
-        int n = csi_proto_build_status(js, sizeof(js), s.st, s.ssid, s.rssi,
-                                       s.mot, s.rate, s.ftm, s.fv);
+        csi_status_t s;
+        echo_state_get(&s);
+        int n = csi_proto_build_status(js, sizeof(js), &s);
         if (n < 0) return BLE_ATT_ERR_UNLIKELY;
         int rc = os_mbuf_append(ctxt->om, js, (uint16_t)n);
         return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
@@ -77,8 +82,8 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
         }
         buf[outlen] = '\0';
         csi_cmd_t cmd;
-        if (csi_proto_parse_control(buf, &cmd) && s_cmd_fn) {
-            s_cmd_fn(&cmd);  // 实现里只投递到队列,不阻塞 host task
+        if (csi_proto_parse_control(buf, &cmd)) {
+            route_cmd(&cmd);  // 不阻塞 host task
         }
         return 0;  // 未知命令忽略,不报错
     }
@@ -115,17 +120,17 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
-        } else if (s_active) {
+        } else {
             start_advertising();  // 连接失败,继续广播
         }
         return 0;
     case BLE_GAP_EVENT_DISCONNECT:
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_status_subscribed = false;
-        if (s_active) start_advertising();
+        start_advertising();
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        if (s_active) start_advertising();
+        start_advertising();
         return 0;
     case BLE_GAP_EVENT_SUBSCRIBE:
         if (event->subscribe.attr_handle == s_status_val_handle) {
@@ -177,7 +182,7 @@ static void on_sync(void)
         return;
     }
     s_synced = true;
-    if (s_active) start_advertising();
+    start_advertising();
 }
 
 static void on_reset(int reason)
@@ -195,30 +200,25 @@ static void host_task(void *param)
 static void notify_cb(void *arg)
 {
     (void)arg;
-    if (!s_active || s_conn_handle == BLE_HS_CONN_HANDLE_NONE ||
-        !s_status_subscribed) {
+    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE || !s_status_subscribed) {
         return;
     }
     char js[CSI_JSON_CAP];
-    csi_status_t s = { 0 };
-    if (s_status_fn) s_status_fn(&s);
-    int n = csi_proto_build_status(js, sizeof(js), s.st, s.ssid, s.rssi,
-                                   s.mot, s.rate, s.ftm, s.fv);
+    csi_status_t s;
+    echo_state_get(&s);
+    int n = csi_proto_build_status(js, sizeof(js), &s);
     if (n < 0) return;
     struct os_mbuf *om = ble_hs_mbuf_from_flat(js, (uint16_t)n);
     if (!om) return;
     ble_gatts_notify_custom(s_conn_handle, s_status_val_handle, om);
 }
 
-esp_err_t csi_ble_start(void)
+esp_err_t csi_ble_init(void)
 {
-    s_active = true;
-
     if (!s_inited) {
         esp_err_t err = nimble_port_init();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "nimble_port_init 失败: %s", esp_err_to_name(err));
-            s_active = false;
             return err;
         }
         ble_hs_cfg.reset_cb = on_reset;
@@ -230,7 +230,6 @@ esp_err_t csi_ble_start(void)
         if (rc == 0) rc = ble_gatts_add_svcs(s_svcs);
         if (rc != 0) {
             ESP_LOGE(TAG, "注册 GATT 失败 rc=%d", rc);
-            s_active = false;
             return ESP_FAIL;
         }
         ble_svc_gap_device_name_set(CSI_BLE_NAME);
@@ -247,23 +246,9 @@ esp_err_t csi_ble_start(void)
             .name = "csi_notify",
         };
         esp_timer_create(&args, &s_notify_timer);
-    }
-    if (s_notify_timer) {
-        esp_timer_stop(s_notify_timer);  // 幂等:先停再起
-        esp_timer_start_periodic(s_notify_timer, CSI_NOTIFY_PERIOD_US);
+        if (s_notify_timer) {
+            esp_timer_start_periodic(s_notify_timer, CSI_NOTIFY_PERIOD_US);
+        }
     }
     return ESP_OK;
-}
-
-void csi_ble_stop(void)
-{
-    s_active = false;
-    if (s_notify_timer) {
-        esp_timer_stop(s_notify_timer);  // 保留定时器对象,供下次复用
-    }
-    ble_gap_adv_stop();
-    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-        ble_gap_terminate(s_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-    }
-    s_status_subscribed = false;
 }

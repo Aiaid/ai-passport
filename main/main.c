@@ -11,12 +11,16 @@
 #include "bsp_button.h"
 #include "bsp_pins.h"      // 错误日志里要打印 BSP_LCD_* 引脚号
 #include "demo.h"
+#include "demo_radio.h"    // demo_radio_nvs_prepare(供常驻 BLE 先备好 NVS)
+#include "echo_state.h"
+#include "csi_ble.h"
 #include "ui_echo.h"
 #include "lvgl.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include <string.h>
 
 static const char *TAG = "main";
 
@@ -77,12 +81,12 @@ static void menu_build(void) {
 
     lv_obj_t *sub = ui_echo_label(s_menu_scr, "PASSIVE WIFI ECHOLOCATION",
                                   &lv_font_montserrat_14, ECHO_MUTED);
-    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 10, 34);
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, ECHO_SAFE + 2, ECHO_BODY_Y);
 
-    // 两张大卡片竖排。
+    // 两张大卡片竖排(安全区内)。
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        int y = 70 + (int)i * 88;
-        s_cards[i] = ui_echo_panel(s_menu_scr, 8, y, 224, 78);
+        int y = 72 + (int)i * 88;
+        s_cards[i] = ui_echo_panel(s_menu_scr, ECHO_SAFE, y, ECHO_BODY_W, 76);
         s_rows[i] = ui_echo_label(s_cards[i], DEMOS[i].name,
                                   &lv_font_montserrat_20, ECHO_TEXT);
         lv_obj_align(s_rows[i], LV_ALIGN_TOP_LEFT, 4, 10);
@@ -122,6 +126,29 @@ static void dispatch_key(bsp_btn_t btn, bsp_btn_ev_t ev) {
     }
 }
 
+// 切到指定 demo(本地按键或 BLE 远程请求共用)。只在 LVGL 任务里调用(已持锁)。
+static void switch_to(int idx) {
+    if (idx < 0 || idx >= (int)DEMO_COUNT) return;
+    if (s_active == idx) return;             // 已在目标模式
+    if (s_active >= 0) {
+        DEMOS[s_active].exit();
+    } else if (s_menu_scr) {
+        lv_obj_delete(s_menu_scr);
+        s_menu_scr = NULL;
+    }
+    s_active = idx;
+    s_sel = idx;
+    DEMOS[idx].enter();
+}
+
+// 处理 BLE 下发的远程切模式请求(在 LVGL 任务里安全地退出/进入 demo)。
+static void handle_mode_request(void) {
+    char req[8];
+    if (!echo_state_take_mode_request(req, sizeof(req))) return;
+    if (strcmp(req, "echo") == 0)       switch_to(0);
+    else if (strcmp(req, "radar") == 0) switch_to(1);
+}
+
 // 跑在 LVGL 任务里(已持锁),每 20ms 把队列里攒下的按键一次性处理完。
 static void key_timer_cb(lv_timer_t *timer) {
     (void)timer;
@@ -132,6 +159,7 @@ static void key_timer_cb(lv_timer_t *timer) {
         if (s_active < 0 && !s_menu_scr) continue;
         dispatch_key(event.btn, event.ev);
     }
+    handle_mode_request();  // BLE 远程切模式
 }
 
 // 按键回调运行在 esp_timer 任务里 —— iot_button 的扫描和 esp_lvgl_port 的
@@ -174,6 +202,13 @@ void app_main(void) {
     bool button_ok = (bsp_button_init(on_key, NULL) == ESP_OK);
     s_ok[0] = button_ok;      // ECHO:可进入,网络失败在屏上报
     s_ok[1] = button_ok;      // RADAR:可进入,失败在屏上报
+
+    // 共享状态 + 常驻 BLE:开机即起,独立于具体 demo,面板随时可连/看状态/远程切模式。
+    echo_state_init();
+    demo_radio_nvs_prepare();   // BLE 控制器需要 NVS 就绪
+    if (csi_ble_init() != ESP_OK) {
+        ESP_LOGE(TAG, "BLE 初始化失败;本地功能仍可用");
+    }
 
     if (bsp_lvgl_lock(1000)) {
         enter_menu();

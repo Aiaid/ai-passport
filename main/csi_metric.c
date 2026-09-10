@@ -38,6 +38,13 @@ void csi_motion_init(csi_motion_t *m, float alpha, float scale)
     m->primed = 0;
 }
 
+void csi_motion_set_params(csi_motion_t *m, float alpha, float scale)
+{
+    if (m == NULL) return;
+    if (alpha >= 0.0f) m->alpha = alpha;
+    if (scale > 0.0f)  m->scale = scale;
+}
+
 int csi_motion_update(csi_motion_t *m, const float *amp, int n)
 {
     if (m == NULL || amp == NULL || n <= 0) {

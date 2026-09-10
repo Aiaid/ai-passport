@@ -30,7 +30,7 @@ run_static_checks() {
     "${test_dir}/test_csi_metric"
 
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
-        tests/test_csi_proto.c main/csi_proto.c \
+        tests/test_csi_proto.c main/csi_proto.c -lm \
         -o "${test_dir}/test_csi_proto"
     "${test_dir}/test_csi_proto"
 
@@ -38,6 +38,11 @@ run_static_checks() {
         tests/test_disco_class.c main/disco_class.c \
         -o "${test_dir}/test_disco_class"
     "${test_dir}/test_disco_class"
+
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_occupancy.c main/occupancy.c \
+        -o "${test_dir}/test_occupancy"
+    "${test_dir}/test_occupancy"
 
     python3 tests/test_verify_firmware.py
     rm -rf "${test_dir}"

@@ -1,11 +1,13 @@
 idf_component_register(
     SRCS "main.c"
          "ui_echo.c"
+         "echo_state.c"
          "demo_radio.c"
          "demo_csi.c"
          "csi_metric.c"
          "csi_proto.c"
          "csi_ble.c"
+         "occupancy.c"
          "demo_discovery.c"
          "disco_class.c"
     INCLUDE_DIRS "."
