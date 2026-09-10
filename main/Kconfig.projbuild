@@ -1,0 +1,39 @@
+menu "ECHO (WiFi CSI Sensing)"
+
+    config CSI_WIFI_SSID
+        string "CSI STA SSID"
+        default ""
+        help
+            被动 CSI 采集时作为 STA 连接的路由器 SSID。留空则 CSI 模式在屏上
+            提示未配置并停留,不会崩溃。请在本地 sdkconfig 填写;切勿提交真实凭证
+            (sdkconfig 已 gitignore)。
+
+    config CSI_WIFI_PASSWORD
+        string "CSI STA password"
+        default ""
+        help
+            上面 SSID 对应的密码。开放网络可留空。切勿提交真实凭证。
+
+    config CSI_PING_INTERVAL_MS
+        int "Ping interval (ms)"
+        default 100
+        range 10 10000
+        help
+            连上后定速 ping 目标的间隔。每个 echo reply 回来触发一次 CSI 回调,
+            间隔越小 CSI 速率越高,但也更占空口/功耗。
+
+    config CSI_PING_TARGET
+        string "Ping target IP (empty = gateway)"
+        default ""
+        help
+            定速 ping 的目标 IPv4。留空则使用 DHCP 拿到的网关地址。
+
+    config CSI_FTM_AUTO_INTERVAL_S
+        int "Auto FTM ranging interval (s, 0 = off)"
+        default 0
+        range 0 600
+        help
+            >0 时每隔该秒数自动发起一次 FTM 测距(需 AP 支持 responder)。
+            默认 0 关闭,只在收到 BLE {"cmd":"ftm"} 时测距。
+
+endmenu

@@ -31,6 +31,7 @@ static const demo_entry_t DEMOS[] = {
     { "Button",  demo_button_enter,  demo_button_exit,  demo_button_key  },
     { "Audio",   demo_audio_enter,   demo_audio_exit,   demo_audio_key   },
     { "Battery", demo_battery_enter, demo_battery_exit, demo_battery_key },
+    { "ECHO",    demo_csi_enter,     demo_csi_exit,     demo_csi_key     },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
@@ -70,7 +71,8 @@ static void menu_refresh(void) {
 static void menu_build(void) {
     s_menu_scr = ui_pixel_screen_create("PUZZLES");
 
-    // 3 行 × 2 列:最后一行底边 y=186,不会遮住 y=242 的吉祥物。
+    // 2 列网格(7 项 = 4 行):末行(第 6 项)底边含阴影约 y=239,
+    // 仍不遮住 y=242 的吉祥物。新增项继续沿用此排布。
     for (size_t i = 0; i < DEMO_COUNT; i++) {
         int x = 11 + (int)(i % 2) * 112;
         int y = 52 + (int)(i / 2) * 47;
@@ -180,6 +182,7 @@ void app_main(void) {
     s_ok[3] = button_ok;
     s_ok[4] = audio_ok;
     s_ok[5] = battery_ok;
+    s_ok[6] = button_ok;      // WiFi CSI:可进入,网络失败在屏上报
 
     if (bsp_lvgl_lock(1000)) {
         enter_menu();

@@ -29,6 +29,13 @@ CONFIG_LV_MEM_SIZE_KILOBYTES=24
 # --- 系统 ---
 CONFIG_FREERTOS_HZ=1000
 
+# --- WiFi CSI 感知(demo_csi)---
+# 开启信道状态信息(CSI)采集能力;C3 的 soc 声明 SOC_WIFI_CSI_SUPPORT,
+# 但 API 仅在此 Kconfig 打开后才真正生效。被动接收,不发射干扰。
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+# CSI 靠定速 ping 网关的 echo reply 触发,需要 lwip 的 ping_sock 应用。
+CONFIG_LWIP_IPV4=y
+
 # --- Bluetooth LE / NimBLE ---
 # ESP32-C3 仅支持 BLE；示例只启用单连接 peripheral 所需的最小 host 配置。
 CONFIG_BT_ENABLED=y
@@ -40,3 +47,9 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=n
+
+# --- WiFi / BLE 软件共存 ---
+# CSI 模式同时开 WiFi(STA+CSI+ping+FTM)与 BLE(NimBLE 广播/GATT),
+# C3 单天线需软件共存分时调度。显式开启以保证二者同时工作。
+CONFIG_ESP_COEX_ENABLED=y
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
