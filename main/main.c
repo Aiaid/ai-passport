@@ -14,6 +14,7 @@
 #include "demo.h"
 #include "demo_radio.h"    // demo_radio_nvs_prepare(供常驻 BLE 先备好 NVS)
 #include "echo_state.h"
+#include "app_settings.h"
 #include "csi_ble.h"
 #include "ui_echo.h"
 #include "lvgl.h"
@@ -28,14 +29,9 @@ static const char *TAG = "main";
 static const demo_entry_t DEMOS[] = {
     { "ECHO",  demo_csi_enter,       demo_csi_exit,       demo_csi_key       },
     { "RADAR", demo_discovery_enter, demo_discovery_exit, demo_discovery_key },
+    { "SET",   demo_settings_enter,  demo_settings_exit,  demo_settings_key  },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
-
-// 每项的副标题(菜单卡片上的一行说明)。
-static const char *DEMO_DESC[DEMO_COUNT] = {
-    "WiFi CSI motion sense",
-    "Passive device scan",
-};
 
 // 各项是否可进入(依赖按键初始化)。
 static bool s_ok[DEMO_COUNT];
@@ -62,8 +58,6 @@ static lv_timer_t   *s_key_timer;
 static void menu_refresh(void) {
     for (size_t i = 0; i < DEMO_COUNT; i++) {
         bool sel = ((int)i == s_sel);
-        lv_label_set_text_fmt(s_rows[i], "%s%s",
-                              DEMOS[i].name, s_ok[i] ? "" : " [X]");
         // 选中:琥珀底 + 深色字;失败:红字;常规:面板底 + 亮字。
         uint32_t bg = sel ? ECHO_AMBER : ECHO_PANEL;
         uint32_t bd = sel ? ECHO_AMBER : ECHO_STROKE;
@@ -78,22 +72,28 @@ static void menu_refresh(void) {
 }
 
 static void menu_build(void) {
-    s_menu_scr = ui_echo_screen("ECHO");
+    s_menu_scr = ui_echo_screen("ECHO");  // 品牌字标保持英文
 
-    lv_obj_t *sub = ui_echo_label(s_menu_scr, "PASSIVE WIFI ECHOLOCATION",
-                                  &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_t *sub = ui_echo_label(s_menu_scr, ui_i18n_t(I18N_SUBTITLE),
+                                  ui_echo_font(false), ECHO_MUTED);
     lv_obj_align(sub, LV_ALIGN_TOP_LEFT, ECHO_SAFE + 2, ECHO_BODY_Y);
 
-    // 两张大卡片竖排(安全区内)。
+    // 三张卡片竖排(安全区内):ECHO / RADAR / 设置。
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        int y = 72 + (int)i * 88;
-        s_cards[i] = ui_echo_panel(s_menu_scr, ECHO_SAFE, y, ECHO_BODY_W, 76);
-        s_rows[i] = ui_echo_label(s_cards[i], DEMOS[i].name,
-                                  &lv_font_montserrat_20, ECHO_TEXT);
-        lv_obj_align(s_rows[i], LV_ALIGN_TOP_LEFT, 4, 10);
-        s_desc[i] = ui_echo_label(s_cards[i], DEMO_DESC[i],
-                                  &lv_font_montserrat_14, ECHO_MUTED);
-        lv_obj_align(s_desc[i], LV_ALIGN_BOTTOM_LEFT, 4, -10);
+        int y = 60 + (int)i * 80;
+        s_cards[i] = ui_echo_panel(s_menu_scr, ECHO_SAFE, y, ECHO_BODY_W, 70);
+
+        // ECHO/RADAR 标题用品牌英文;设置项用 i18n + 语言字体。
+        bool is_set = (i == 2);
+        const char *title = is_set ? ui_i18n_t(I18N_CARD_SETTINGS) : DEMOS[i].name;
+        const lv_font_t *tf = is_set ? ui_echo_font(true) : &lv_font_montserrat_20;
+        s_rows[i] = ui_echo_label(s_cards[i], title, tf, ECHO_TEXT);
+        lv_obj_align(s_rows[i], LV_ALIGN_TOP_LEFT, 4, 8);
+
+        const char *desc = (i == 0) ? ui_i18n_t(I18N_DESC_ECHO)
+                         : (i == 1) ? ui_i18n_t(I18N_DESC_RADAR) : "";
+        s_desc[i] = ui_echo_label(s_cards[i], desc, ui_echo_font(false), ECHO_MUTED);
+        lv_obj_align(s_desc[i], LV_ALIGN_BOTTOM_LEFT, 4, -8);
     }
 
     menu_refresh();
@@ -203,6 +203,7 @@ void app_main(void) {
     bool button_ok = (bsp_button_init(on_key, NULL) == ESP_OK);
     s_ok[0] = button_ok;      // ECHO:可进入,网络失败在屏上报
     s_ok[1] = button_ok;      // RADAR:可进入,失败在屏上报
+    s_ok[2] = button_ok;      // 设置
 
     // 扬声器:ECHO 绊线告警蜂鸣用。失败不阻塞(仅无声)。
     if (bsp_audio_init() != ESP_OK) {
@@ -212,6 +213,12 @@ void app_main(void) {
     // 共享状态 + 常驻 BLE:开机即起,独立于具体 demo,面板随时可连/看状态/远程切模式。
     echo_state_init();
     demo_radio_nvs_prepare();   // BLE 控制器需要 NVS 就绪
+
+    // 从 NVS 读设置并应用(语言/阈值/灵敏度/告警/ping);无存档用默认(中文)。
+    app_settings_t cfg;
+    app_settings_load(&cfg);
+    app_settings_apply(&cfg);
+
     if (csi_ble_init() != ESP_OK) {
         ESP_LOGE(TAG, "BLE 初始化失败;本地功能仍可用");
     }

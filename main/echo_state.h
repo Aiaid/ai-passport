@@ -34,6 +34,8 @@ void echo_state_set_sens(float alpha, float scale);
 void echo_state_get_sens(float *alpha, float *scale);
 void echo_state_set_occ_th(int th);
 int  echo_state_get_occ_th(void);
+void echo_state_set_ping_ms(int ms);
+int  echo_state_get_ping_ms(void);
 
 // 远程模式切换请求:BLE 回调 set,主循环 take(取走后清除)。
 void echo_state_request_mode(const char *mode);
@@ -43,7 +45,16 @@ bool echo_state_take_mode_request(char *out, int cap);  // 有待处理返回 tr
 void echo_state_post_cmd(const csi_cmd_t *cmd);
 bool echo_state_take_cmd(csi_cmd_t *out);
 
-// 绊线告警:占用跳变时自增序号(随 STATUS 带出);声光开关(默认开)。
+// 绊线告警:占用跳变时自增序号(随 STATUS 带出)。
 void echo_state_mark_alert(void);
-void echo_state_set_alert_enabled(bool en);
+// 告警模式:0 off / 1 once / 2 continuous。alert_enabled 为兼容旧开关(mode!=0)。
+void echo_state_set_alert_mode(int mode);
+int  echo_state_get_alert_mode(void);
+void echo_state_set_alert_enabled(bool en);   // en -> mode once / off
 bool echo_state_alert_enabled(void);
+// 蜂鸣音量 0..100。
+void echo_state_set_volume(int vol);
+int  echo_state_get_volume(void);
+// 屏幕亮度 0..100(下限由调用方 clamp)。
+void echo_state_set_brightness(int b);
+int  echo_state_get_brightness(void);

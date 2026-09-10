@@ -18,7 +18,10 @@ typedef enum {
     CSI_CMD_SENS,       // 调灵敏度(alpha/scale)
     CSI_CMD_OCC_TH,     // 占用阈值(v)
     CSI_CMD_CALIB,      // 重新自标定空场基线
-    CSI_CMD_ALERT,      // 开/关声光告警(v=0/1)
+    CSI_CMD_ALERT,      // 开/关告警(v=0/1,= off/once)
+    CSI_CMD_ALERT_MODE, // 告警模式(v: 0 off / 1 once / 2 cont)
+    CSI_CMD_VOL,        // 蜂鸣音量(v=0..100)
+    CSI_CMD_BRIGHT,     // 屏幕亮度(v=0..100)
 } csi_cmd_kind_t;
 
 typedef struct {

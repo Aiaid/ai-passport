@@ -2,6 +2,7 @@
 #include "csi_ble.h"
 #include "csi_proto.h"
 #include "echo_state.h"
+#include "bsp_display.h"   // 亮度命令直接调背光
 
 #include <string.h>
 
@@ -51,6 +52,14 @@ static void route_cmd(const csi_cmd_t *cmd)
     case CSI_CMD_SENS:   echo_state_set_sens(cmd->alpha, cmd->scale); break;
     case CSI_CMD_OCC_TH: echo_state_set_occ_th(cmd->v); break;
     case CSI_CMD_ALERT:  echo_state_set_alert_enabled(cmd->v != 0); break;
+    case CSI_CMD_ALERT_MODE: echo_state_set_alert_mode(cmd->v); break;
+    case CSI_CMD_VOL:    echo_state_set_volume(cmd->v); break;
+    case CSI_CMD_BRIGHT: {
+        int b = cmd->v < 10 ? 10 : cmd->v;   // 下限,别全黑
+        echo_state_set_brightness(b);
+        bsp_display_backlight((uint8_t)b);
+        break;
+    }
     default:             echo_state_post_cmd(cmd); break;  // start/stop/ftm/ping_ms/calib
     }
 }

@@ -15,6 +15,7 @@
 #define DEF_ALPHA  0.2f
 #define DEF_SCALE  8.0f
 #define DEF_OCC_TH 25
+#define DEF_PING_MS 100
 
 static SemaphoreHandle_t s_mtx;
 static QueueHandle_t     s_cmd_q;
@@ -23,11 +24,14 @@ static csi_status_t s_state;
 static float s_alpha = DEF_ALPHA;
 static float s_scale = DEF_SCALE;
 static int   s_occ_th = DEF_OCC_TH;
+static int   s_ping_ms = DEF_PING_MS;
 
 static char s_mode_req[8];
 static bool s_mode_req_pending;
 
-static bool s_alert_en = true;  // 声光告警开关(默认开)
+static int s_alert_mode = 1;    // 0 off / 1 once / 2 continuous(默认 once)
+static int s_volume = 70;       // 蜂鸣音量
+static int s_brightness = 100;  // 屏幕亮度
 
 static void lock(void)   { if (s_mtx) xSemaphoreTake(s_mtx, portMAX_DELAY); }
 static void unlock(void) { if (s_mtx) xSemaphoreGive(s_mtx); }
@@ -42,8 +46,11 @@ void echo_state_init(void)
     s_alpha = DEF_ALPHA;
     s_scale = DEF_SCALE;
     s_occ_th = DEF_OCC_TH;
+    s_ping_ms = DEF_PING_MS;
     s_mode_req_pending = false;
-    s_alert_en = true;
+    s_alert_mode = 1;
+    s_volume = 70;
+    s_brightness = 100;
     unlock();
 }
 
@@ -136,6 +143,21 @@ int echo_state_get_occ_th(void)
     return v;
 }
 
+void echo_state_set_ping_ms(int ms)
+{
+    lock();
+    s_ping_ms = ms;
+    unlock();
+}
+
+int echo_state_get_ping_ms(void)
+{
+    lock();
+    int v = s_ping_ms;
+    unlock();
+    return v;
+}
+
 void echo_state_request_mode(const char *mode)
 {
     if (!mode) return;
@@ -167,17 +189,66 @@ void echo_state_mark_alert(void)
     unlock();
 }
 
+void echo_state_set_alert_mode(int mode)
+{
+    if (mode < 0) mode = 0;
+    if (mode > 2) mode = 2;
+    lock();
+    s_alert_mode = mode;
+    unlock();
+}
+
+int echo_state_get_alert_mode(void)
+{
+    lock();
+    int v = s_alert_mode;
+    unlock();
+    return v;
+}
+
 void echo_state_set_alert_enabled(bool en)
 {
     lock();
-    s_alert_en = en;
+    s_alert_mode = en ? 1 : 0;   // 兼容旧开关:开=once,关=off
     unlock();
 }
 
 bool echo_state_alert_enabled(void)
 {
     lock();
-    bool v = s_alert_en;
+    bool v = (s_alert_mode != 0);
+    unlock();
+    return v;
+}
+
+void echo_state_set_volume(int vol)
+{
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    lock();
+    s_volume = vol;
+    unlock();
+}
+
+int echo_state_get_volume(void)
+{
+    lock();
+    int v = s_volume;
+    unlock();
+    return v;
+}
+
+void echo_state_set_brightness(int b)
+{
+    lock();
+    s_brightness = b;
+    unlock();
+}
+
+int echo_state_get_brightness(void)
+{
+    lock();
+    int v = s_brightness;
     unlock();
     return v;
 }

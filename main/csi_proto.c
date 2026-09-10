@@ -143,6 +143,39 @@ bool csi_proto_parse_control(const char *in, csi_cmd_t *out)
         return true;
     }
 
+    if (strcmp(cmd, "alert_mode") == 0) {
+        char m[8];
+        if (!find_string_value(in, "\"v\"", m, sizeof(m))) return false;
+        int md;
+        if (strcmp(m, "off") == 0)       md = 0;
+        else if (strcmp(m, "once") == 0) md = 1;
+        else if (strcmp(m, "cont") == 0) md = 2;
+        else return false;
+        out->kind = CSI_CMD_ALERT_MODE;
+        out->v = md;
+        return true;
+    }
+
+    if (strcmp(cmd, "vol") == 0) {
+        int v = 70;
+        find_int_value(in, "\"v\"", &v);
+        if (v < 0) v = 0;
+        if (v > 100) v = 100;
+        out->kind = CSI_CMD_VOL;
+        out->v = v;
+        return true;
+    }
+
+    if (strcmp(cmd, "bright") == 0) {
+        int v = 100;
+        find_int_value(in, "\"v\"", &v);
+        if (v < 0) v = 0;
+        if (v > 100) v = 100;
+        out->kind = CSI_CMD_BRIGHT;
+        out->v = v;
+        return true;
+    }
+
     if (strcmp(cmd, "ping_ms") == 0) {
         int v = 100;
         find_int_value(in, "\"v\"", &v);

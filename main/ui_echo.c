@@ -1,6 +1,17 @@
 // main/ui_echo.c —— 见 ui_echo.h。
 #include "ui_echo.h"
 
+LV_FONT_DECLARE(lv_font_echo_cjk_16);
+LV_FONT_DECLARE(lv_font_echo_cjk_20);
+
+const lv_font_t *ui_echo_font(bool big)
+{
+    if (ui_i18n_get_lang() == UI_LANG_ZH) {
+        return big ? &lv_font_echo_cjk_20 : &lv_font_echo_cjk_16;
+    }
+    return big ? &lv_font_montserrat_20 : &lv_font_montserrat_14;
+}
+
 lv_obj_t *ui_echo_screen(const char *title)
 {
     lv_obj_t *scr = lv_obj_create(NULL);

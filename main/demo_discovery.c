@@ -277,12 +277,12 @@ static void ui_tick(lv_timer_t *t)
     } else {
         lv_label_set_text_fmt(s_total, "x%d ch%d", n, s_channel);
     }
-    lv_label_set_text_fmt(s_cnt[0], "PHONE  %d", cnt[DISCO_PHONE]);
-    lv_label_set_text_fmt(s_cnt[1], "PC  %d", cnt[DISCO_PC]);
-    lv_label_set_text_fmt(s_cnt[2], "IOT  %d", cnt[DISCO_IOT]);
-    lv_label_set_text_fmt(s_cnt[3], "AP  %d", cnt[DISCO_AP]);
+    lv_label_set_text_fmt(s_cnt[0], "%s  %d", ui_i18n_t(I18N_PHONE), cnt[DISCO_PHONE]);
+    lv_label_set_text_fmt(s_cnt[1], "%s  %d", ui_i18n_t(I18N_PC), cnt[DISCO_PC]);
+    lv_label_set_text_fmt(s_cnt[2], "%s  %d", ui_i18n_t(I18N_IOT), cnt[DISCO_IOT]);
+    lv_label_set_text_fmt(s_cnt[3], "%s  %d", ui_i18n_t(I18N_AP), cnt[DISCO_AP]);
     // 随机 MAC 的 STA 多被归为 UNKNOWN,单列一项以免"消失"。
-    lv_label_set_text_fmt(s_cnt[4], "?  %d", cnt[DISCO_UNKNOWN]);
+    lv_label_set_text_fmt(s_cnt[4], "%s  %d", ui_i18n_t(I18N_UNKNOWN), cnt[DISCO_UNKNOWN]);
 
     // 写入共享状态,供常驻 BLE 的 STATUS 通知(radar 形态)。
     int st = s_failed ? 3 : (s_sniffing ? 2 : 1);
@@ -373,9 +373,8 @@ void demo_discovery_enter(void)
     // 右侧类型计数(颜色即类型)+ UNKNOWN。
     lv_obj_t *cp = ui_echo_panel(s_scr, 100, ECHO_BODY_Y, 130, 84);
     const uint32_t cc[5] = { ECHO_T_PHONE, ECHO_T_PC, ECHO_T_IOT, ECHO_T_AP, 0x9E9E9E };
-    const char *cinit[5] = { "PHONE  0", "PC  0", "IOT  0", "AP  0", "?  0" };
     for (int i = 0; i < 5; i++) {
-        s_cnt[i] = ui_echo_label(cp, cinit[i], &lv_font_montserrat_14, cc[i]);
+        s_cnt[i] = ui_echo_label(cp, "", ui_echo_font(false), cc[i]);
         lv_obj_align(s_cnt[i], LV_ALIGN_TOP_LEFT, 0, i * 15);
     }
 

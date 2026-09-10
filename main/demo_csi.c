@@ -65,11 +65,9 @@ static lv_obj_t   *s_motion_num; // 仪表中央大数字
 static lv_obj_t   *s_heat[CSI_BARS];  // 子载波热力条
 static lv_obj_t   *s_rate;
 static lv_obj_t   *s_dist;
-static lv_obj_t   *s_occ_panel;  // 占用面板(告警屏闪用)
 static lv_obj_t   *s_occ_lbl;    // 占用指示(主)
 static lv_obj_t   *s_occ_sub;    // 占用指示(副:链路/校准提示)
 static lv_timer_t *s_ui_timer;
-static lv_timer_t *s_flash_timer;  // 告警屏闪复原(一次性)
 static uint32_t    s_ui_last_ms;
 static uint32_t    s_ui_last_count;
 
@@ -88,6 +86,9 @@ static int               s_calib_buf[CSI_CALIB_SAMPLES];
 static int               s_calib_n;
 static int               s_occ_prev;      // 上一拍占用态,用于检测 EMPTY->OCCUPIED 跳变
 static volatile bool     s_beep_req;      // ui_tick 置位、worker 播蜂鸣
+static int               s_cont_ms;       // continuous 模式下的重复计时
+
+#define CSI_CONT_INTERVAL_MS 1500          // continuous 响铃间隔
 
 // --- 共享状态(int 用 volatile;ssid 用互斥量保护)---
 static SemaphoreHandle_t s_lock;
@@ -426,6 +427,7 @@ static void capture_stop(void)
 static void update_ping_interval(int ms)
 {
     s_ping_interval_ms = ms;
+    echo_state_set_ping_ms(ms);  // 与设置同步(便于 NVS 快照)
     if (s_capturing && s_cap_state == CAP_CONNECTED) {
         stop_ping();
         start_ping();
@@ -454,7 +456,7 @@ static void play_beep(void)
 {
     // 合成两声短"哔"(2kHz 正弦),经 ES8311/I2S 播放。
     if (bsp_audio_set_format(16000, 16, 1) != ESP_OK) return;
-    bsp_audio_set_volume(80);
+    bsp_audio_set_volume((uint8_t)echo_state_get_volume());
 
     static int16_t chunk[256];
     const float sr = 16000.0f, freq = 2000.0f;
@@ -518,30 +520,6 @@ static void csi_worker(void *arg)
 }
 
 // ===========================================================================
-// 告警屏闪(LVGL task)
-// ===========================================================================
-static void flash_restore_cb(lv_timer_t *t)
-{
-    if (s_occ_panel) {
-        lv_obj_set_style_bg_color(s_occ_panel, lv_color_hex(ECHO_PANEL), 0);
-    }
-    lv_timer_delete(t);
-    s_flash_timer = NULL;
-}
-
-static void start_flash(void)
-{
-    if (!s_occ_panel) return;
-    lv_obj_set_style_bg_color(s_occ_panel, lv_color_hex(ECHO_RED), 0);  // 高亮
-    if (s_flash_timer) {
-        lv_timer_reset(s_flash_timer);  // 已在闪:延长复原
-    } else {
-        s_flash_timer = lv_timer_create(flash_restore_cb, 450, NULL);
-        lv_timer_set_repeat_count(s_flash_timer, 1);  // 一次性
-    }
-}
-
-// ===========================================================================
 // UI 刷新(LVGL task,已持锁)
 // ===========================================================================
 static void ui_tick(lv_timer_t *t)
@@ -554,13 +532,13 @@ static void ui_tick(lv_timer_t *t)
     // 状态行:SSID + 连接态配色。
     uint32_t scol;
     switch (st) {
-    case 0: lv_label_set_text(s_status, "IDLE"); scol = ECHO_MUTED; break;
-    case 1: lv_label_set_text_fmt(s_status, "%s",
-                ssid[0] ? ssid : "connecting..."); scol = ECHO_AMBER; break;
-    case 2: lv_label_set_text_fmt(s_status, "%s", ssid); scol = ECHO_GREEN; break;
+    case 0: lv_label_set_text(s_status, ui_i18n_t(I18N_IDLE)); scol = ECHO_MUTED; break;
+    case 1: lv_label_set_text(s_status, ssid[0] ? ssid : ui_i18n_t(I18N_CONNECTING));
+            scol = ECHO_AMBER; break;
+    case 2: lv_label_set_text(s_status, ssid); scol = ECHO_GREEN; break;
     default:
         lv_label_set_text(s_status,
-            ssid[0] ? "connect failed" : "set WiFi in menuconfig");
+            ssid[0] ? ui_i18n_t(I18N_FAILED) : ui_i18n_t(I18N_NOWIFI));
         scol = ECHO_RED;
         break;
     }
@@ -590,7 +568,7 @@ static void ui_tick(lv_timer_t *t)
         lv_label_set_text_fmt(s_dist, "%dcm", s_ftm_cm);
         lv_obj_set_style_text_color(s_dist, lv_color_hex(ECHO_GREEN), 0);
     } else {
-        lv_label_set_text(s_dist, "N/A");
+        lv_label_set_text(s_dist, ui_i18n_t(I18N_NA));
         lv_obj_set_style_text_color(s_dist, lv_color_hex(ECHO_RED), 0);
     }
 
@@ -637,9 +615,9 @@ static void ui_tick(lv_timer_t *t)
         }
         s_occ_val = 0;
         s_occ_s = 0;
-        lv_label_set_text(s_occ_lbl, "CALIBRATING");
+        lv_label_set_text(s_occ_lbl, ui_i18n_t(I18N_CALIBRATING));
         lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_AMBER), 0);
-        lv_label_set_text(s_occ_sub, "please leave area");
+        lv_label_set_text(s_occ_sub, ui_i18n_t(I18N_LEAVE));
         lv_obj_set_style_text_color(s_occ_sub, lv_color_hex(ECHO_AMBER2), 0);
     } else {
         // 阈值随面板 occ_th 命令实时生效(手动优先于自标定值)。
@@ -647,23 +625,26 @@ static void ui_tick(lv_timer_t *t)
         s_occ_val = occupancy_update(&s_occ, motion, CSI_UI_REFRESH_MS);
         s_occ_s = occupancy_seconds(&s_occ);
         if (s_occ_val) {
-            lv_label_set_text_fmt(s_occ_lbl, "OCCUPIED  %ds", s_occ_s);
+            lv_label_set_text_fmt(s_occ_lbl, "%s  %ds", ui_i18n_t(I18N_OCCUPIED), s_occ_s);
             lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_GREEN), 0);
         } else {
-            lv_label_set_text_fmt(s_occ_lbl, "EMPTY  %ds", s_occ_s);
+            lv_label_set_text_fmt(s_occ_lbl, "%s  %ds", ui_i18n_t(I18N_EMPTY), s_occ_s);
             lv_obj_set_style_text_color(s_occ_lbl, lv_color_hex(ECHO_MUTED), 0);
         }
-        lv_label_set_text(s_occ_sub, "link: device <> AP");
+        lv_label_set_text(s_occ_sub, ui_i18n_t(I18N_LINK));
         lv_obj_set_style_text_color(s_occ_sub, lv_color_hex(ECHO_MUTED), 0);
     }
 
-    // EMPTY->OCCUPIED 跳变 = 有人穿过 device↔AP 链路:告警一次(非持续)。
-    if (s_occ_val && !s_occ_prev) {
+    // 告警:0 off / 1 once / 2 continuous。
+    int amode = echo_state_get_alert_mode();
+    if (s_occ_val && !s_occ_prev) {           // EMPTY->OCCUPIED 跳变
         echo_state_mark_alert();              // STATUS 的 alert 自增(BLE 通知)
-        if (echo_state_alert_enabled()) {
-            s_beep_req = true;                // worker 异步蜂鸣
-            start_flash();                    // 屏闪(LVGL task)
-        }
+        if (amode != 0) s_beep_req = true;    // once/cont 均先响一声(worker 异步)
+        s_cont_ms = 0;
+    }
+    if (s_occ_val && amode == 2) {            // continuous:占用期间周期重复
+        s_cont_ms += CSI_UI_REFRESH_MS;
+        if (s_cont_ms >= CSI_CONT_INTERVAL_MS) { s_beep_req = true; s_cont_ms = 0; }
     }
     s_occ_prev = s_occ_val;
 
@@ -695,7 +676,7 @@ void demo_csi_enter(void)
     s_ftm_valid = 0;
     s_ui_last_ms = 0;
     s_ui_last_count = 0;
-    s_ping_interval_ms = CONFIG_CSI_PING_INTERVAL_MS;
+    s_ping_interval_ms = echo_state_get_ping_ms();  // 来自设置/NVS
     set_ssid("");
 
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
@@ -709,7 +690,7 @@ void demo_csi_enter(void)
     s_calib_n = 0;
     s_occ_prev = 0;
     s_beep_req = false;
-    s_flash_timer = NULL;
+    s_cont_ms = 0;
 
     // enter 已在 LVGL task 上下文且已持锁,直接建屏。ECHO HUD 风格。
     s_scr = ui_echo_screen("ECHO");
@@ -717,14 +698,14 @@ void demo_csi_enter(void)
 
     // 状态行:SSID(左)+ RSSI(右)。
     lv_obj_t *stp = ui_echo_panel(s_scr, ECHO_SAFE, ECHO_BODY_Y, ECHO_BODY_W, 22);
-    s_status = ui_echo_label(stp, "Starting...", &lv_font_montserrat_14, ECHO_MUTED);
+    s_status = ui_echo_label(stp, "", ui_echo_font(false), ECHO_MUTED);
     lv_obj_align(s_status, LV_ALIGN_LEFT_MID, 0, 0);
     s_rssi_lbl = ui_echo_label(stp, "--", &lv_font_montserrat_14, ECHO_MUTED);
     lv_obj_align(s_rssi_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
 
     // 半圆运动分仪表(lv_arc:180..360 为上半圆)。
     lv_obj_t *mp = ui_echo_panel(s_scr, ECHO_SAFE, 66, ECHO_BODY_W, 100);
-    lv_obj_t *ml = ui_echo_label(mp, "MOTION", &lv_font_montserrat_14, ECHO_AMBER2);
+    lv_obj_t *ml = ui_echo_label(mp, ui_i18n_t(I18N_MOTION), ui_echo_font(false), ECHO_AMBER2);
     lv_obj_align(ml, LV_ALIGN_TOP_LEFT, 0, 0);
 
     s_arc = lv_arc_create(mp);
@@ -747,7 +728,7 @@ void demo_csi_enter(void)
 
     // 子载波热力条(16 条,高度/颜色按幅度)。
     lv_obj_t *ap = ui_echo_panel(s_scr, ECHO_SAFE, 170, ECHO_BODY_W, 50);
-    lv_obj_t *al = ui_echo_label(ap, "CSI AMP", &lv_font_montserrat_14, ECHO_T_PC);
+    lv_obj_t *al = ui_echo_label(ap, ui_i18n_t(I18N_CSIAMP), ui_echo_font(false), ECHO_T_PC);
     lv_obj_align(al, LV_ALIGN_TOP_LEFT, 0, 0);
     for (int b = 0; b < CSI_BARS; b++) {
         lv_obj_t *bar = lv_obj_create(ap);
@@ -763,23 +744,22 @@ void demo_csi_enter(void)
 
     // DIST / RATE 两个小面板。
     lv_obj_t *dp = ui_echo_panel(s_scr, ECHO_SAFE, 222, 104, 28);
-    lv_obj_t *dl = ui_echo_label(dp, "DIST", &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_t *dl = ui_echo_label(dp, ui_i18n_t(I18N_DIST), ui_echo_font(false), ECHO_MUTED);
     lv_obj_align(dl, LV_ALIGN_LEFT_MID, 0, 0);
-    s_dist = ui_echo_label(dp, "N/A", &lv_font_montserrat_14, ECHO_RED);
+    s_dist = ui_echo_label(dp, ui_i18n_t(I18N_NA), ui_echo_font(false), ECHO_RED);
     lv_obj_align(s_dist, LV_ALIGN_RIGHT_MID, 0, 0);
 
     lv_obj_t *rp = ui_echo_panel(s_scr, 126, 222, 104, 28);
-    lv_obj_t *rl = ui_echo_label(rp, "RATE", &lv_font_montserrat_14, ECHO_MUTED);
+    lv_obj_t *rl = ui_echo_label(rp, ui_i18n_t(I18N_RATE), ui_echo_font(false), ECHO_MUTED);
     lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
     s_rate = ui_echo_label(rp, "--", &lv_font_montserrat_14, ECHO_GREEN);
     lv_obj_align(s_rate, LV_ALIGN_RIGHT_MID, 0, 0);
 
     // 占用指示(醒目):主行 OCCUPIED/EMPTY/CALIBRATING,副行链路/校准提示。
     lv_obj_t *op = ui_echo_panel(s_scr, ECHO_SAFE, 252, ECHO_BODY_W, 42);
-    s_occ_panel = op;
-    s_occ_lbl = ui_echo_label(op, "CALIBRATING", &lv_font_montserrat_20, ECHO_AMBER);
+    s_occ_lbl = ui_echo_label(op, ui_i18n_t(I18N_CALIBRATING), ui_echo_font(true), ECHO_AMBER);
     lv_obj_align(s_occ_lbl, LV_ALIGN_TOP_MID, 0, 0);
-    s_occ_sub = ui_echo_label(op, "please leave area", &lv_font_montserrat_14, ECHO_AMBER2);
+    s_occ_sub = ui_echo_label(op, ui_i18n_t(I18N_LEAVE), ui_echo_font(false), ECHO_AMBER2);
     lv_obj_align(s_occ_sub, LV_ALIGN_BOTTOM_MID, 0, 0);
 
     ui_tick(NULL);
@@ -803,10 +783,6 @@ void demo_csi_exit(void)
         lv_timer_delete(s_ui_timer);
         s_ui_timer = NULL;
     }
-    if (s_flash_timer) {
-        lv_timer_delete(s_flash_timer);
-        s_flash_timer = NULL;
-    }
 
     // 请求后台收场并等待其完成(它负责按序关 CSI/ping/FTM/WiFi)。BLE 常驻不停。
     s_stop_req = true;
@@ -822,7 +798,7 @@ void demo_csi_exit(void)
         lv_obj_delete(s_scr);
         s_scr = NULL;
         s_status = s_rssi_lbl = s_arc = s_motion_num = s_rate = s_dist = NULL;
-        s_occ_panel = s_occ_lbl = s_occ_sub = NULL;
+        s_occ_lbl = s_occ_sub = NULL;
         for (int b = 0; b < CSI_BARS; b++) s_heat[b] = NULL;
     }
 }

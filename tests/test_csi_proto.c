@@ -63,6 +63,14 @@ static void test_parse_v1(void)
     assert(csi_proto_parse_control("{\"cmd\":\"calib\"}", &c) && c.kind == CSI_CMD_CALIB);
     assert(csi_proto_parse_control("{\"cmd\":\"alert\",\"v\":0}", &c) && c.kind == CSI_CMD_ALERT && c.v == 0);
     assert(csi_proto_parse_control("{\"cmd\":\"alert\",\"v\":1}", &c) && c.v == 1);
+    assert(csi_proto_parse_control("{\"cmd\":\"alert_mode\",\"v\":\"off\"}", &c) && c.kind == CSI_CMD_ALERT_MODE && c.v == 0);
+    assert(csi_proto_parse_control("{\"cmd\":\"alert_mode\",\"v\":\"once\"}", &c) && c.v == 1);
+    assert(csi_proto_parse_control("{\"cmd\":\"alert_mode\",\"v\":\"cont\"}", &c) && c.v == 2);
+    assert(!csi_proto_parse_control("{\"cmd\":\"alert_mode\",\"v\":\"bad\"}", &c));
+    assert(csi_proto_parse_control("{\"cmd\":\"vol\",\"v\":50}", &c) && c.kind == CSI_CMD_VOL && c.v == 50);
+    assert(csi_proto_parse_control("{\"cmd\":\"vol\",\"v\":500}", &c) && c.v == 100);
+    assert(csi_proto_parse_control("{\"cmd\":\"bright\",\"v\":30}", &c) && c.kind == CSI_CMD_BRIGHT && c.v == 30);
+    assert(csi_proto_parse_control("{\"cmd\":\"bright\",\"v\":-9}", &c) && c.v == 0);
     assert(csi_proto_parse_control("{\"cmd\":\"ping_ms\",\"v\":5}", &c) && c.v == 20);
     assert(csi_proto_parse_control("{\"cmd\":\"ping_ms\",\"v\":5000}", &c) && c.v == 2000);
 }

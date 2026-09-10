@@ -1,7 +1,12 @@
 idf_component_register(
     SRCS "main.c"
          "ui_echo.c"
+         "ui_i18n.c"
+         "lv_font_echo_cjk_16.c"
+         "lv_font_echo_cjk_20.c"
          "echo_state.c"
+         "app_settings.c"
+         "demo_settings.c"
          "demo_radio.c"
          "demo_csi.c"
          "csi_metric.c"

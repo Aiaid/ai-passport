@@ -6,6 +6,7 @@
 #pragma once
 
 #include "lvgl.h"
+#include "ui_i18n.h"
 
 // —— 安全区(屏幕可视区为圆角矩形:外圈留白、四角不放内容)——
 #define ECHO_SAFE    10   // 左右安全内边距
@@ -51,6 +52,9 @@ lv_obj_t *ui_echo_panel(lv_obj_t *parent, int x, int y, int w, int h);
 // 便捷 label。
 lv_obj_t *ui_echo_label(lv_obj_t *parent, const char *text,
                         const lv_font_t *font, uint32_t color);
+
+// 当前语言对应的字体:中文用子集 CJK 字体,英文用 montserrat。big=大号(~20)。
+const lv_font_t *ui_echo_font(bool big);
 
 // 运动分(0..100)→ 阈值色:<40 绿 / <70 琥珀 / 否则红。
 uint32_t ui_echo_motion_color(int score);
