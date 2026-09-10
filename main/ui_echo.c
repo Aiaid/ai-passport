@@ -54,6 +54,14 @@ lv_obj_t *ui_echo_header_right(lv_obj_t *scr, const char *text)
     return r;
 }
 
+lv_obj_t *ui_echo_screen_title(lv_obj_t *scr)
+{
+    if (!scr) return NULL;
+    lv_obj_t *hdr = lv_obj_get_child(scr, 0);   // header 是 scr 第 0 子对象
+    if (!hdr) return NULL;
+    return lv_obj_get_child(hdr, 0);            // 标题是 header 第 0 子对象
+}
+
 lv_obj_t *ui_echo_panel(lv_obj_t *parent, int x, int y, int w, int h)
 {
     lv_obj_t *p = lv_obj_create(parent);

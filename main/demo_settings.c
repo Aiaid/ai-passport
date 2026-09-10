@@ -40,8 +40,16 @@ static lv_obj_t *s_scr;
 static lv_obj_t *s_row[IT_COUNT];
 static lv_obj_t *s_name[IT_COUNT];
 static lv_obj_t *s_val[IT_COUNT];
+static lv_obj_t *s_hint;
 static int       s_sel;
 static bool      s_editing;
+
+// 值 label 的字体:语言自称/告警模式含中文用语言字体,其余数值用 montserrat。
+static const lv_font_t *val_font(int i)
+{
+    return (i == IT_LANG || i == IT_ALERT) ? ui_echo_font(false)
+                                           : &lv_font_montserrat_14;
+}
 
 static void save_now(void)
 {
@@ -130,29 +138,37 @@ static void settings_build(void)
                                   ui_echo_font(false), ECHO_TEXT);
         lv_obj_align(s_name[i], LV_ALIGN_LEFT_MID, 0, 0);
 
-        // 数值:数字/ASCII 用 montserrat;语言自称/开关含中文,用语言字体。
-        const lv_font_t *vf = (i == IT_LANG || i == IT_ALERT)
-                              ? ui_echo_font(false) : &lv_font_montserrat_14;
-        s_val[i] = ui_echo_label(s_row[i], "", vf, ECHO_MUTED);
+        s_val[i] = ui_echo_label(s_row[i], "", val_font(i), ECHO_MUTED);
         lv_obj_align(s_val[i], LV_ALIGN_RIGHT_MID, 0, 0);
     }
 
     // 底部操作提示。
-    lv_obj_t *hint = ui_echo_label(s_scr, ui_i18n_t(I18N_NAV_HINT),
-                                   ui_echo_font(false), ECHO_MUTED);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+    s_hint = ui_echo_label(s_scr, ui_i18n_t(I18N_NAV_HINT),
+                           ui_echo_font(false), ECHO_MUTED);
+    lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 0, -6);
 
     refresh();
     lv_screen_load(s_scr);
 }
 
-static void settings_rebuild(void)
+// 切语言:就地更新现有屏的文字+字体,不删屏重建(LVGL9 下 load 新屏后同步删旧
+// 活动屏会踩悬空引用导致卡死)。全程在 LVGL task、已持锁。
+static void settings_relocalize(void)
 {
-    if (s_scr) {
-        lv_obj_t *old = s_scr;
-        settings_build();          // 建新屏并 load
-        lv_obj_delete(old);        // 再删旧屏
+    lv_obj_t *title = ui_echo_screen_title(s_scr);
+    if (title) {
+        lv_obj_set_style_text_font(title, ui_echo_font(true), 0);
+        lv_label_set_text(title, ui_i18n_t(I18N_SETTINGS_TITLE));
     }
+    for (int i = 0; i < IT_COUNT; i++) {
+        lv_obj_set_style_text_font(s_name[i], ui_echo_font(false), 0);
+        lv_obj_set_style_text_font(s_val[i], val_font(i), 0);
+    }
+    if (s_hint) {
+        lv_obj_set_style_text_font(s_hint, ui_echo_font(false), 0);
+        lv_label_set_text(s_hint, ui_i18n_t(I18N_NAV_HINT));
+    }
+    refresh();  // 重设各项文字(t(key))/值/选中态
 }
 
 // 编辑态下加减当前项(实时应用到 echo_state)。
@@ -222,6 +238,7 @@ void demo_settings_exit(void)
     if (s_scr) {
         lv_obj_delete(s_scr);
         s_scr = NULL;
+        s_hint = NULL;
         for (int i = 0; i < IT_COUNT; i++) {
             s_row[i] = s_name[i] = s_val[i] = NULL;
         }
@@ -247,7 +264,7 @@ void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
     case IT_LANG:
         ui_i18n_set_lang(ui_i18n_get_lang() == UI_LANG_ZH ? UI_LANG_EN : UI_LANG_ZH);
         save_now();
-        settings_rebuild();       // 语言/字体全变,重建本屏
+        settings_relocalize();    // 就地换文字+字体,不删屏重建(防 UAF 卡死)
         break;
     case IT_ALERT:  // 循环 off -> once -> cont
         echo_state_set_alert_mode((echo_state_get_alert_mode() + 1) % 3);

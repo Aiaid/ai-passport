@@ -756,7 +756,7 @@ void demo_csi_enter(void)
     lv_obj_align(s_rate, LV_ALIGN_RIGHT_MID, 0, 0);
 
     // 占用指示(醒目):主行 OCCUPIED/EMPTY/CALIBRATING,副行链路/校准提示。
-    lv_obj_t *op = ui_echo_panel(s_scr, ECHO_SAFE, 252, ECHO_BODY_W, 42);
+    lv_obj_t *op = ui_echo_panel(s_scr, ECHO_SAFE, 250, ECHO_BODY_W, 48);
     s_occ_lbl = ui_echo_label(op, ui_i18n_t(I18N_CALIBRATING), ui_echo_font(true), ECHO_AMBER);
     lv_obj_align(s_occ_lbl, LV_ALIGN_TOP_MID, 0, 0);
     s_occ_sub = ui_echo_label(op, ui_i18n_t(I18N_LEAVE), ui_echo_font(false), ECHO_AMBER2);

@@ -46,6 +46,9 @@ lv_obj_t *ui_echo_screen(const char *title);
 // 在 header 右侧加一个可动态更新的小标签(深色字),返回该标签;parent 传屏幕。
 lv_obj_t *ui_echo_header_right(lv_obj_t *scr, const char *text);
 
+// 取 header 的标题 label(切换语言时就地更新其文字/字体用);找不到返回 NULL。
+lv_obj_t *ui_echo_screen_title(lv_obj_t *scr);
+
 // #121A2E 面板 + #243352 描边 + 小圆角,绝对定位。
 lv_obj_t *ui_echo_panel(lv_obj_t *parent, int x, int y, int w, int h);
 

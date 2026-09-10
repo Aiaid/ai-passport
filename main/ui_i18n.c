@@ -23,7 +23,7 @@ static const char *const STR[I18N_KEY_COUNT][2] = {
     { "EMPTY",                       "无人" },                     // EMPTY
     { "CALIBRATING",                 "标定中" },                   // CALIBRATING
     { "please leave area",           "请离开感应区" },             // LEAVE
-    { "link: device-AP",             "设备与热点链路" },           // LINK
+    { "link: device-AP",             "链路 设备-AP" },             // LINK
     { "N/A",                         "无" },                       // NA
     { "PHONE",                       "手机" },                     // PHONE
     { "PC",                          "电脑" },                     // PC
@@ -33,7 +33,7 @@ static const char *const STR[I18N_KEY_COUNT][2] = {
     { "SETTINGS",                    "设置" },                     // SETTINGS_TITLE
     { "Language",                    "语言" },                     // LANGUAGE
     { "Occ threshold",              "占用阈值" },                 // OCC_TH
-    { "Smoothing",                   "平滑系数" },                 // SMOOTHING
+    { "Smoothing",                   "平滑" },                     // SMOOTHING
     { "Scale",                       "量程" },                     // SCALE
     { "Alert",                       "告警" },                     // ALERT
     { "Recalibrate",                 "重新标定" },                 // RECALIB
