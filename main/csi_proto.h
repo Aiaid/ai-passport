@@ -18,6 +18,7 @@ typedef enum {
     CSI_CMD_SENS,       // 调灵敏度(alpha/scale)
     CSI_CMD_OCC_TH,     // 占用阈值(v)
     CSI_CMD_CALIB,      // 重新自标定空场基线
+    CSI_CMD_ALERT,      // 开/关声光告警(v=0/1)
 } csi_cmd_kind_t;
 
 typedef struct {
@@ -46,6 +47,7 @@ typedef struct {
     int  dev_ap;
     int  dev_unk;
     int  dev_tot;
+    int  alert;         // ECHO:绊线告警自增序号(面板据此检测新触发)
 } csi_status_t;
 
 // 生成 STATUS JSON 到 out(NUL 结尾)。按 s->mode 决定字段:

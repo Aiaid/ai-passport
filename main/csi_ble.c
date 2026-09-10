@@ -50,7 +50,8 @@ static void route_cmd(const csi_cmd_t *cmd)
     case CSI_CMD_MODE:   echo_state_request_mode(cmd->mode); break;
     case CSI_CMD_SENS:   echo_state_set_sens(cmd->alpha, cmd->scale); break;
     case CSI_CMD_OCC_TH: echo_state_set_occ_th(cmd->v); break;
-    default:             echo_state_post_cmd(cmd); break;  // start/stop/ftm/ping_ms
+    case CSI_CMD_ALERT:  echo_state_set_alert_enabled(cmd->v != 0); break;
+    default:             echo_state_post_cmd(cmd); break;  // start/stop/ftm/ping_ms/calib
     }
 }
 

@@ -42,3 +42,8 @@ bool echo_state_take_mode_request(char *out, int cap);  // 有待处理返回 tr
 // ECHO 命令队列(start/stop/ftm/ping_ms):BLE post,demo_csi 非阻塞 take。
 void echo_state_post_cmd(const csi_cmd_t *cmd);
 bool echo_state_take_cmd(csi_cmd_t *out);
+
+// 绊线告警:占用跳变时自增序号(随 STATUS 带出);声光开关(默认开)。
+void echo_state_mark_alert(void);
+void echo_state_set_alert_enabled(bool en);
+bool echo_state_alert_enabled(void);

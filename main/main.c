@@ -9,6 +9,7 @@
 #include "bsp_i2c.h"
 #include "bsp_display.h"
 #include "bsp_button.h"
+#include "bsp_audio.h"     // 绊线告警蜂鸣用扬声器
 #include "bsp_pins.h"      // 错误日志里要打印 BSP_LCD_* 引脚号
 #include "demo.h"
 #include "demo_radio.h"    // demo_radio_nvs_prepare(供常驻 BLE 先备好 NVS)
@@ -202,6 +203,11 @@ void app_main(void) {
     bool button_ok = (bsp_button_init(on_key, NULL) == ESP_OK);
     s_ok[0] = button_ok;      // ECHO:可进入,网络失败在屏上报
     s_ok[1] = button_ok;      // RADAR:可进入,失败在屏上报
+
+    // 扬声器:ECHO 绊线告警蜂鸣用。失败不阻塞(仅无声)。
+    if (bsp_audio_init() != ESP_OK) {
+        ESP_LOGW(TAG, "音频初始化失败;告警将无蜂鸣");
+    }
 
     // 共享状态 + 常驻 BLE:开机即起,独立于具体 demo,面板随时可连/看状态/远程切模式。
     echo_state_init();

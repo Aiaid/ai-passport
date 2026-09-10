@@ -22,10 +22,12 @@
 #include "occupancy.h"
 #include "ui_echo.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "bsp_audio.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -63,9 +65,11 @@ static lv_obj_t   *s_motion_num; // 仪表中央大数字
 static lv_obj_t   *s_heat[CSI_BARS];  // 子载波热力条
 static lv_obj_t   *s_rate;
 static lv_obj_t   *s_dist;
+static lv_obj_t   *s_occ_panel;  // 占用面板(告警屏闪用)
 static lv_obj_t   *s_occ_lbl;    // 占用指示(主)
 static lv_obj_t   *s_occ_sub;    // 占用指示(副:链路/校准提示)
 static lv_timer_t *s_ui_timer;
+static lv_timer_t *s_flash_timer;  // 告警屏闪复原(一次性)
 static uint32_t    s_ui_last_ms;
 static uint32_t    s_ui_last_count;
 
@@ -82,6 +86,8 @@ static volatile bool     s_recalib_req;   // 双击/BLE calib 请求重标定
 static bool              s_calibrating;
 static int               s_calib_buf[CSI_CALIB_SAMPLES];
 static int               s_calib_n;
+static int               s_occ_prev;      // 上一拍占用态,用于检测 EMPTY->OCCUPIED 跳变
+static volatile bool     s_beep_req;      // ui_tick 置位、worker 播蜂鸣
 
 // --- 共享状态(int 用 volatile;ssid 用互斥量保护)---
 static SemaphoreHandle_t s_lock;
@@ -442,6 +448,42 @@ static void handle_cmd(const csi_cmd_t *cmd)
 }
 
 // ===========================================================================
+// 告警蜂鸣(worker task 调用,阻塞写 I2S,不在 ui_tick/回调里做)
+// ===========================================================================
+static void play_beep(void)
+{
+    // 合成两声短"哔"(2kHz 正弦),经 ES8311/I2S 播放。
+    if (bsp_audio_set_format(16000, 16, 1) != ESP_OK) return;
+    bsp_audio_set_volume(80);
+
+    static int16_t chunk[256];
+    const float sr = 16000.0f, freq = 2000.0f;
+    int phase = 0;
+    for (int beep = 0; beep < 2; beep++) {
+        int remain = 1920;  // ~120ms
+        while (remain > 0 && !s_stop_req) {
+            int n = remain > 256 ? 256 : remain;
+            for (int i = 0; i < n; i++) {
+                chunk[i] = (int16_t)(8000.0f *
+                    sinf(2.0f * 3.14159265f * freq * (float)phase / sr));
+                phase++;
+            }
+            bsp_audio_write(chunk, (size_t)n * 2);
+            remain -= n;
+        }
+        if (beep == 0) {  // 两声之间 ~60ms 静音
+            for (int i = 0; i < 256; i++) chunk[i] = 0;
+            int gap = 960;
+            while (gap > 0 && !s_stop_req) {
+                int n = gap > 256 ? 256 : gap;
+                bsp_audio_write(chunk, (size_t)n * 2);
+                gap -= n;
+            }
+        }
+    }
+}
+
+// ===========================================================================
 // 后台 task
 // ===========================================================================
 static void csi_worker(void *arg)
@@ -455,8 +497,9 @@ static void csi_worker(void *arg)
 
     capture_start();  // 进入即自动开始采集
 
-    // 命令循环:ECHO 命令从共享队列取;每 100ms 醒来以便响应 stop_req。
+    // 命令循环:ECHO 命令从共享队列取;每 100ms 醒来以便响应 stop_req / 蜂鸣。
     while (!s_stop_req) {
+        if (s_beep_req) { s_beep_req = false; play_beep(); }  // 告警蜂鸣(异步)
         csi_cmd_t cmd;
         bool got = false;
         while (echo_state_take_cmd(&cmd)) {
@@ -472,6 +515,30 @@ static void csi_worker(void *arg)
 
     s_worker_alive = false;
     vTaskDelete(NULL);
+}
+
+// ===========================================================================
+// 告警屏闪(LVGL task)
+// ===========================================================================
+static void flash_restore_cb(lv_timer_t *t)
+{
+    if (s_occ_panel) {
+        lv_obj_set_style_bg_color(s_occ_panel, lv_color_hex(ECHO_PANEL), 0);
+    }
+    lv_timer_delete(t);
+    s_flash_timer = NULL;
+}
+
+static void start_flash(void)
+{
+    if (!s_occ_panel) return;
+    lv_obj_set_style_bg_color(s_occ_panel, lv_color_hex(ECHO_RED), 0);  // 高亮
+    if (s_flash_timer) {
+        lv_timer_reset(s_flash_timer);  // 已在闪:延长复原
+    } else {
+        s_flash_timer = lv_timer_create(flash_restore_cb, 450, NULL);
+        lv_timer_set_repeat_count(s_flash_timer, 1);  // 一次性
+    }
 }
 
 // ===========================================================================
@@ -590,6 +657,16 @@ static void ui_tick(lv_timer_t *t)
         lv_obj_set_style_text_color(s_occ_sub, lv_color_hex(ECHO_MUTED), 0);
     }
 
+    // EMPTY->OCCUPIED 跳变 = 有人穿过 device↔AP 链路:告警一次(非持续)。
+    if (s_occ_val && !s_occ_prev) {
+        echo_state_mark_alert();              // STATUS 的 alert 自增(BLE 通知)
+        if (echo_state_alert_enabled()) {
+            s_beep_req = true;                // worker 异步蜂鸣
+            start_flash();                    // 屏闪(LVGL task)
+        }
+    }
+    s_occ_prev = s_occ_val;
+
     // 把当前状态写入共享结构,供常驻 BLE 的 STATUS 通知读取。
     echo_state_set_echo(st, ssid, s_rssi, motion, s_rate_pps,
                         s_ftm_cm, s_ftm_valid, s_occ_val, s_occ_s);
@@ -630,6 +707,9 @@ void demo_csi_enter(void)
     s_recalib_req = false;
     s_calibrating = true;
     s_calib_n = 0;
+    s_occ_prev = 0;
+    s_beep_req = false;
+    s_flash_timer = NULL;
 
     // enter 已在 LVGL task 上下文且已持锁,直接建屏。ECHO HUD 风格。
     s_scr = ui_echo_screen("ECHO");
@@ -696,6 +776,7 @@ void demo_csi_enter(void)
 
     // 占用指示(醒目):主行 OCCUPIED/EMPTY/CALIBRATING,副行链路/校准提示。
     lv_obj_t *op = ui_echo_panel(s_scr, ECHO_SAFE, 252, ECHO_BODY_W, 42);
+    s_occ_panel = op;
     s_occ_lbl = ui_echo_label(op, "CALIBRATING", &lv_font_montserrat_20, ECHO_AMBER);
     lv_obj_align(s_occ_lbl, LV_ALIGN_TOP_MID, 0, 0);
     s_occ_sub = ui_echo_label(op, "please leave area", &lv_font_montserrat_14, ECHO_AMBER2);
@@ -717,10 +798,14 @@ void demo_csi_enter(void)
 
 void demo_csi_exit(void)
 {
-    // 先停 UI 定时器:此后没有东西再读/写 LVGL 对象。
+    // 先停 UI 定时器 + 屏闪定时器:此后没有东西再读/写 LVGL 对象。
     if (s_ui_timer) {
         lv_timer_delete(s_ui_timer);
         s_ui_timer = NULL;
+    }
+    if (s_flash_timer) {
+        lv_timer_delete(s_flash_timer);
+        s_flash_timer = NULL;
     }
 
     // 请求后台收场并等待其完成(它负责按序关 CSI/ping/FTM/WiFi)。BLE 常驻不停。
@@ -737,7 +822,7 @@ void demo_csi_exit(void)
         lv_obj_delete(s_scr);
         s_scr = NULL;
         s_status = s_rssi_lbl = s_arc = s_motion_num = s_rate = s_dist = NULL;
-        s_occ_lbl = s_occ_sub = NULL;
+        s_occ_panel = s_occ_lbl = s_occ_sub = NULL;
         for (int b = 0; b < CSI_BARS; b++) s_heat[b] = NULL;
     }
 }

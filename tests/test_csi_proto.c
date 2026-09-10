@@ -17,12 +17,13 @@ static void test_build_echo(void)
     char buf[256];
     csi_status_t s = { 0 };
     s.st = 2; strcpy(s.mode, "echo"); strcpy(s.ssid, "anend-iot");
-    s.rssi = -47; s.mot = 38; s.occ = 1; s.occ_s = 12; s.rate = 10;
+    s.rssi = -47; s.mot = 38; s.occ = 1; s.occ_s = 12; s.rate = 10; s.alert = 3;
     int n = csi_proto_build_status(buf, sizeof(buf), &s);
     assert(n > 0 && (size_t)n == strlen(buf));
     assert(strcmp(buf,
         "{\"st\":2,\"mode\":\"echo\",\"ssid\":\"anend-iot\",\"rssi\":-47,"
-        "\"mot\":38,\"occ\":1,\"occ_s\":12,\"rate\":10,\"ftm\":0,\"fv\":0}") == 0);
+        "\"mot\":38,\"occ\":1,\"occ_s\":12,\"rate\":10,\"ftm\":0,"
+        "\"fv\":0,\"alert\":3}") == 0);
 }
 
 static void test_build_radar(void)
@@ -60,6 +61,8 @@ static void test_parse_v1(void)
     assert(csi_proto_parse_control("{\"cmd\":\"stop\"}", &c) && c.kind == CSI_CMD_STOP);
     assert(csi_proto_parse_control("{\"cmd\":\"ftm\"}", &c) && c.kind == CSI_CMD_FTM);
     assert(csi_proto_parse_control("{\"cmd\":\"calib\"}", &c) && c.kind == CSI_CMD_CALIB);
+    assert(csi_proto_parse_control("{\"cmd\":\"alert\",\"v\":0}", &c) && c.kind == CSI_CMD_ALERT && c.v == 0);
+    assert(csi_proto_parse_control("{\"cmd\":\"alert\",\"v\":1}", &c) && c.v == 1);
     assert(csi_proto_parse_control("{\"cmd\":\"ping_ms\",\"v\":5}", &c) && c.v == 20);
     assert(csi_proto_parse_control("{\"cmd\":\"ping_ms\",\"v\":5000}", &c) && c.v == 2000);
 }

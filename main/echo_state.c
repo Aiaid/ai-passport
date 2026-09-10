@@ -27,6 +27,8 @@ static int   s_occ_th = DEF_OCC_TH;
 static char s_mode_req[8];
 static bool s_mode_req_pending;
 
+static bool s_alert_en = true;  // 声光告警开关(默认开)
+
 static void lock(void)   { if (s_mtx) xSemaphoreTake(s_mtx, portMAX_DELAY); }
 static void unlock(void) { if (s_mtx) xSemaphoreGive(s_mtx); }
 
@@ -41,6 +43,7 @@ void echo_state_init(void)
     s_scale = DEF_SCALE;
     s_occ_th = DEF_OCC_TH;
     s_mode_req_pending = false;
+    s_alert_en = true;
     unlock();
 }
 
@@ -155,6 +158,28 @@ bool echo_state_take_mode_request(char *out, int cap)
     s_mode_req_pending = false;
     unlock();
     return pending;
+}
+
+void echo_state_mark_alert(void)
+{
+    lock();
+    s_state.alert++;
+    unlock();
+}
+
+void echo_state_set_alert_enabled(bool en)
+{
+    lock();
+    s_alert_en = en;
+    unlock();
+}
+
+bool echo_state_alert_enabled(void)
+{
+    lock();
+    bool v = s_alert_en;
+    unlock();
+    return v;
 }
 
 void echo_state_post_cmd(const csi_cmd_t *cmd)

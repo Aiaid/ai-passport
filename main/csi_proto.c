@@ -46,9 +46,10 @@ int csi_proto_build_status(char *out, size_t cap, const csi_status_t *s)
         escape_json(s->ssid, esc, sizeof(esc));
         n = snprintf(out, cap,
             "{\"st\":%d,\"mode\":\"echo\",\"ssid\":\"%s\",\"rssi\":%d,"
-            "\"mot\":%d,\"occ\":%d,\"occ_s\":%d,\"rate\":%d,\"ftm\":%d,\"fv\":%d}",
+            "\"mot\":%d,\"occ\":%d,\"occ_s\":%d,\"rate\":%d,\"ftm\":%d,"
+            "\"fv\":%d,\"alert\":%d}",
             s->st, esc, s->rssi, s->mot, s->occ, s->occ_s,
-            s->rate, s->ftm, s->fv);
+            s->rate, s->ftm, s->fv, s->alert);
     }
     if (n < 0 || (size_t)n >= cap) return -1;
     return n;
@@ -133,6 +134,14 @@ bool csi_proto_parse_control(const char *in, csi_cmd_t *out)
     if (strcmp(cmd, "stop") == 0)  { out->kind = CSI_CMD_STOP;  return true; }
     if (strcmp(cmd, "ftm") == 0)   { out->kind = CSI_CMD_FTM;   return true; }
     if (strcmp(cmd, "calib") == 0) { out->kind = CSI_CMD_CALIB; return true; }
+
+    if (strcmp(cmd, "alert") == 0) {
+        int v = 1;  // 缺省开
+        find_int_value(in, "\"v\"", &v);
+        out->kind = CSI_CMD_ALERT;
+        out->v = (v != 0) ? 1 : 0;
+        return true;
+    }
 
     if (strcmp(cmd, "ping_ms") == 0) {
         int v = 100;
