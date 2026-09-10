@@ -34,3 +34,7 @@ void demo_battery_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 // 被动 WiFi CSI 采集(在场/运动检测)
 void demo_csi_enter(void);      void demo_csi_exit(void);
 void demo_csi_key(bsp_btn_t btn, bsp_btn_ev_t ev);
+
+// 被动设备发现(RADAR:嗅探 + 粗分类)
+void demo_discovery_enter(void); void demo_discovery_exit(void);
+void demo_discovery_key(bsp_btn_t btn, bsp_btn_ev_t ev);
